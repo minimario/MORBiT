@@ -101,7 +101,7 @@ def simplex_projection(s):
     return np.maximum(s-theta, 0)
 
 update_lambdas = False
-for it_outer in range(601):
+for it_outer in range(1000):
     losses, tasks = inner_loop(batch_size=10, verbose=False)
     overall_loss = 0
     for i, t in enumerate(tasks):
@@ -132,22 +132,22 @@ test_loss = 0
 test_max_loss = 0
 test_sz = 100
 for i in range(test_sz):
-    valid_loss, tasks = inner_loop(mode="val", batch_size=10, n_inner=20, verbose=False)
-    test_loss += sum([i.item() for i in valid_loss])/10
-    test_max_loss += max([i.item() for i in valid_loss])
+    batch_loss, tasks = inner_loop(mode="val", batch_size=10, n_inner=20, verbose=False)
+    test_loss += sum([i.item() for i in batch_loss])/10
+    test_max_loss += max([i.item() for i in batch_loss])
 
 train_loss = 0
 train_max_loss = 0
 for i in range(test_sz):
-    train_loss, tasks = inner_loop(mode="train", batch_size=10, n_inner=20, verbose=False)
-    train_loss += sum([i.item() for i in train_loss])/10
-    train_max_loss += max([i.item() for i in train_loss])
+    batch_loss, tasks = inner_loop(mode="train", batch_size=10, n_inner=20, verbose=False)
+    train_loss += sum([i.item() for i in batch_loss])/10
+    train_max_loss += max([i.item() for i in batch_loss])
 
 print(f"update lambdas: {update_lambdas}")
-print(train_loss / test_sz)
-print(train_max_loss / test_sz)
-print(test_loss / test_sz)
-print(test_max_loss / test_sz)
+print(f"train loss {train_loss / test_sz}")
+print(f"train max loss {train_max_loss / test_sz}")
+print(f"test loss {test_loss / test_sz}")
+print(f"max test loss {test_max_loss / test_sz}")
 
 # from matplotlib import pyplot as plt
 # plt.plot(range(len(losses)), losses)
