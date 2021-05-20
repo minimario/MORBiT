@@ -61,11 +61,11 @@ class Learner():
 
         self.lambdas = 1/sine.train_tasks * np.ones(sine.train_tasks)
 
-    def inner_loop(self, n_inner=5, tasks_per_batch=5, n_shots=10, mode="train", verbose=True):
+    def inner_loop(self, n_inner=10, tasks_per_batch=5, n_shots=100, mode="train", verbose=True):
         # sample list of task id's
         if mode == "train": 
             # task_list = np.random.choice(self.task.train_tasks, tasks_per_batch, replace=False)
-            task_list = np.arange(10)
+            task_list = np.arange(self.task.train_tasks)
         elif mode == "test":
             task_list = np.random.choice(self.task.test_tasks, tasks_per_batch, replace=False) + self.task.train_tasks
         
@@ -115,6 +115,7 @@ class Learner():
 
     def learn(self):
         all_losses = []
+        all_max_losses = []
         for it_outer in range(1000):
             # perform inner loop
             task_losses, tasks = self.inner_loop(tasks_per_batch=10, verbose=False)
@@ -136,14 +137,15 @@ class Learner():
 
             # log average loss for graphing purposes
             all_losses.append(overall_loss.item())
+            all_max_losses.append(max(list(map(lambda x:x.item(), task_losses))))
 
             if it_outer % 100 == 0:
                 print(f"iteration {it_outer}")
                 print(f"losses!: {np.array([i.item() for i in task_losses])}")
                 # print(f"tasks: {tasks)
-                print(f"lambdas: {self.lambdas[:10]}")
+                print(f"lambdas: {self.lambdas[:50]}")
         
-        return all_losses
+        return all_losses, all_max_losses
 
     def evaluate(self, task_size = 100, mode="test"):
         loss = 0
@@ -158,78 +160,26 @@ class Learner():
 
 sine_task = Sine(train_tasks, test_tasks)
 learner_lambdas = Learner(sine_task, update_lambdas=True)
-loss_lambdas = learner_lambdas.learn()
+loss_lambdas, max_loss_lambdas = learner_lambdas.learn()
 
 learner_nolambdas = Learner(sine_task, update_lambdas=False)
-loss_nolambdas = learner_nolambdas.learn()
+loss_nolambdas, max_loss_nolambdas = learner_nolambdas.learn()
+
+# from matplotlib import pyplot as plt
+# plt.plot(range(len(loss_lambdas)), loss_lambdas, label='lambdas')
+# plt.plot(range(len(loss_nolambdas)), loss_nolambdas, label='no lambdas')
+# plt.legend()
+# plt.title("avg loss")
+# plt.show()
+
+from matplotlib import pyplot as plt
+plt.plot(range(len(max_loss_lambdas)), max_loss_lambdas, label='lambdas')
+plt.plot(range(len(max_loss_nolambdas)), max_loss_nolambdas, label='no lambdas')
+plt.legend()
+plt.title("max loss")
+plt.show()
 
 print(learner_lambdas.evaluate(mode="test"))
 print(learner_lambdas.evaluate(mode="train"))
 print(learner_nolambdas.evaluate(mode="test"))
 print(learner_nolambdas.evaluate(mode="train"))
-
-from matplotlib import pyplot as plt
-plt.plot(range(len(loss_lambdas)), loss_lambdas, label='lambdas')
-plt.plot(range(len(loss_nolambdas)), loss_nolambdas, label='no lambdas')
-plt.legend()
-plt.show()
-
-# # losses = []
-# gamma = 0.1
-
-# update_lambdas = True
-# all_losses = []
-# for it_outer in range(1000):
-#     losses, tasks = inner_loop(batch_size=10, verbose=False)
-#     overall_loss = 0
-#     for i, t in enumerate(tasks):
-#         overall_loss += lambdas[t] * losses[i]
-#     all_losses.append(overall_loss.item())
-#     overall_loss.backward()
-#     feature_optimizer.step()
-
-#     if update_lambdas:
-#         for i, t in enumerate(tasks):
-#             lambdas[t] += losses[i] * gamma
-#         lambdas = simplex_projection(lambdas)
-
-#     if it_outer % 100 == 0:
-#         print(f"iteration {it_outer}")
-        # print(f"losses!: {np.array([i.item() for i in losses])}")
-        # print(f"tasks: {tasks)
-        # print(f"lambdas: {lambdas[:10]}")
-        
-    # losses.append(train_loss.item())
-
-#     # all_parameters = list(features.parameters())
-#     # for i in range(total_tasks):
-#     #     all_parameters += list(heads[i].parameters())
-
-#     # torch.autograd.functional.hessian(lambda x:heads[0](features(x)), tuple(all_parameters))
-# from matplotlib import pyplot as plt
-# plt.plot(range(len(all_losses)), all_losses)
-# plt.show()
-# test_loss = 0
-# test_max_loss = 0
-# test_sz = 100
-# for i in range(test_sz):
-#     batch_loss, tasks = inner_loop(mode="val", batch_size=10, n_inner=20, verbose=False)
-#     test_loss += sum([i.item() for i in batch_loss])/10
-#     test_max_loss += max([i.item() for i in batch_loss])
-
-# train_loss = 0
-# train_max_loss = 0
-# for i in range(test_sz):
-#     batch_loss, tasks = inner_loop(mode="train", batch_size=10, n_inner=20, verbose=False)
-#     train_loss += sum([i.item() for i in batch_loss])/10
-#     train_max_loss += max([i.item() for i in batch_loss])
-
-# print(f"update lambdas: {update_lambdas}")
-# print(f"train loss {train_loss / test_sz}")
-# print(f"train max loss {train_max_loss / test_sz}")
-# print(f"test loss {test_loss / test_sz}")
-# print(f"max test loss {test_max_loss / test_sz}")
-
-
-
-
