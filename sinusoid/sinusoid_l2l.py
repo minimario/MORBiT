@@ -15,6 +15,21 @@ import torch.nn as nn
 train_tasks = 5
 test_tasks = 10
 
+def simplex_projection(s):
+    """Projection onto the unit simplex."""
+    # if np.sum(s) <=1 and np.alltrue(s >= 0):
+        # return s
+    # Code taken from https://gist.github.com/daien/1272551
+    # get the array of cumulative sums of a sorted (decreasing) copy of v
+    u = np.sort(s)[::-1]
+    cssv = np.cumsum(u)
+    # get the number of > 0 components of the optimal solution
+    rho = np.nonzero(u * np.arange(1, len(u)+1) > (cssv - 1))[0][-1]
+    # compute the Lagrange multiplier associated to the simplex constraint
+    theta = (cssv[rho] - 1) / (rho + 1.0)
+    # compute the projection by thresholding v using theta
+    return np.maximum(s-theta, 0)
+
 class Sine():
     def __init__(self, train_tasks, test_tasks):
         self.train_tasks = train_tasks
@@ -30,9 +45,9 @@ class Sine():
 
 
 class Learner():
-    def __init__(self, sine, gamma=0.001):
+    def __init__(self, sine, gamma=0.001, update_lambdas=True):
         self.gamma = gamma
-        # self.update_lambdas = update_lambdas
+        self.update_lambdas = update_lambdas
 
         self.task = sine
         self.embedding_dim = 10
@@ -51,9 +66,10 @@ class Learner():
             self.heads[i] = l2l.algorithms.MAML(self.heads[i], lr=self.fast_lr)
 
         self.all_parameters = list(self.features.parameters())
-        self.optimizer = torch.optim.Adam(self.all_parameters, lr=self.meta_lr)
+        # self.optimizer = torch.optim.Adam(self.all_parameters, lr=self.meta_lr)
+        self.optimizer = torch.optim.Adam(self.all_parameters)
 
-        # self.lambdas = 1/sine.train_tasks * np.ones(sine.train_tasks)
+        self.lambdas = 1/sine.train_tasks * np.ones(sine.train_tasks)
 
     def fast_adapt(self, xs_train, ys_train, xs_val, ys_val,
                 learner,
@@ -61,6 +77,7 @@ class Learner():
                 loss,
                 reg_lambda,
                 adaptation_steps):
+                
         adaptation_data = features(xs_train)
         adaptation_labels = ys_train
 
@@ -90,10 +107,11 @@ class Learner():
             self.optimizer.zero_grad()
 
             task_losses = []
+            # training phase
             task_list = np.arange(self.task.train_tasks)
             total_loss = 0
             for task_num in task_list:
-                xs_train, ys_train = self.task.sample_batch(task_num, batch_size=10)
+                xs_train, ys_train = self.task.sample_batch(task_num, batch_size=10) # batch_size = n_shots
                 xs_val, ys_val = self.task.sample_batch(task_num, batch_size=10)
                 
                 learner = self.heads[task_num].clone()
@@ -103,21 +121,47 @@ class Learner():
                                             nn.MSELoss(),
                                             0.01, # lambda reg
                                             10) # inner loop steps
-                total_loss += evaluation_loss
-                task_losses.append(total_loss.item())
+                                        
+                total_loss += self.lambdas[task_num] * evaluation_loss
+                task_losses.append(evaluation_loss.item())
 
-            total_loss /= self.task.train_tasks
+            # total_loss /= self.task.train_tasks
             total_loss.backward()
+            all_losses.append(total_loss.item())
+            all_max_losses.append(max(task_losses))
             if iteration % 10 == 0:
                 print(f"Iteration {iteration}, Loss {total_loss}")
-        
-        self.optimizer.step()
+
+            # testing phase
+            # task_list = self.task.train_tasks + np.arange(self.task.test_tasks)
+            # for task_num in task_list:
+            #     xs_train, ys_train = self.task.sample_batch(task_num, batch_size=10) # batch_size = n_shots
+            #     xs_val, ys_val = self.task.sample_batch(task_num, batch_size=10)
+                
+            #     learner = self.heads[task_num].clone()
+            #     evaluation_loss = self.fast_adapt(xs_train, ys_train, xs_val, ys_val,
+            #                                 learner, 
+            #                                 self.features,
+            #                                 nn.MSELoss(),
+            #                                 0.01, # lambda reg
+            #                                 10) # inner loop steps
+                                        
+            #     total_loss += evaluation_loss
+            #     task_losses.append(evaluation_loss.item())
+
+            # train update
+            self.optimizer.step()
+
+            if self.update_lambdas:
+                for i, t in enumerate(task_list):
+                    self.lambdas[t] += task_losses[i] * self.gamma
+                self.lambdas = simplex_projection(self.lambdas)
         
         return all_losses, all_max_losses
 
 
 sine_task = Sine(train_tasks, test_tasks)
-learner_lambdas = Learner(sine_task)
+learner_lambdas = Learner(sine_task, update_lambdas=True)
 loss_lambdas, max_loss_lambdas = learner_lambdas.learn()
 
 learner_nolambdas = Learner(sine_task, update_lambdas=False)
@@ -136,8 +180,3 @@ plt.plot(range(len(max_loss_nolambdas)), max_loss_nolambdas, label='no lambdas')
 plt.legend()
 plt.title("max loss")
 plt.show()
-
-print(learner_lambdas.evaluate(mode="test"))
-print(learner_lambdas.evaluate(mode="train"))
-print(learner_nolambdas.evaluate(mode="test"))
-print(learner_nolambdas.evaluate(mode="train"))
