@@ -12,79 +12,7 @@ import torch.nn as nn
 
 train_tasks = 10
 test_tasks = 10
-total_tasks = train_tasks + test_tasks
-a = np.random.uniform(0.1, 5, (total_tasks,))
-phi = np.random.uniform(0, np.pi, (total_tasks,))
 
-features = nn.Sequential(
-    nn.Linear(1, 40),
-    nn.ReLU(),
-    nn.Linear(40, 40),
-    nn.ReLU(),
-    nn.Linear(40, 10)
-)
-heads = [nn.Linear(10, 1) for _ in range(total_tasks)]
-
-feature_optimizer = torch.optim.Adam(list(features.parameters()))
-head_optimizers = [torch.optim.Adam(list(heads[i].parameters())) for i in range(total_tasks)]
-
-loss = nn.MSELoss()
-
-def sample_batch(task_id, batch_size):
-    x = np.random.uniform(-5, 5, (batch_size,))
-    y = a[task_id] * np.sin(x - phi[task_id])
-    return torch.tensor(x).unsqueeze(1).type(torch.float32), torch.tensor(y).unsqueeze(1).type(torch.float32)
-
-lambdas = 1/train_tasks * np.ones(train_tasks)
-def inner_loop(n_inner=5, batch_size=5, mode="train", verbose=True):
-    if mode == "train": 
-        # a_list = np.random.choice(train_tasks, batch_size, replace=False)
-        a_list = np.arange(10)
-    elif mode == "val":
-        a_list = np.random.choice(test_tasks, batch_size, replace=False) + train_tasks
-    
-    for a in a_list: 
-        head_optimizers[a].zero_grad()
-        
-        # get data
-        shots = 10
-        xs, ys = sample_batch(a, shots)
-
-        # do outer loop
-        embedding = features(xs)
-
-        # inner loop optimization
-        for it_inner in range(n_inner):
-            # regularization
-            l2_reg_constant = 0.01
-            l2_reg = 0
-            for p in heads[a].parameters():
-                l2_reg += p.norm(2)
-
-            # network loss
-            y_preds = heads[a](embedding)
-            total_loss = loss(y_preds, ys) / ys.shape[0] + l2_reg_constant * l2_reg
-            # backpropagate
-            total_loss.backward(retain_graph=True)
-            head_optimizers[a].step()
-    
-    # validation (don't get to tune inner loop)
-    feature_optimizer.zero_grad()
-    for a in a_list:
-        head_optimizers[a].zero_grad()
-    losses = []
-    for a in a_list:
-        xs, ys = sample_batch(a, shots)
-        embedding = features(xs)
-        y_preds = heads[a](embedding)
-        total_loss = loss(y_preds, ys) / ys.shape[0]
-        if verbose:
-            print(f"task {a}, loss: {total_loss}")
-        losses.append(total_loss)
-    return losses, a_list
-
-# losses = []
-gamma = 0.1
 def simplex_projection(s):
     """Projection onto the unit simplex."""
     # if np.sum(s) <=1 and np.alltrue(s >= 0):
@@ -100,57 +28,208 @@ def simplex_projection(s):
     # compute the projection by thresholding v using theta
     return np.maximum(s-theta, 0)
 
-update_lambdas = False
-for it_outer in range(1000):
-    losses, tasks = inner_loop(batch_size=10, verbose=False)
-    overall_loss = 0
-    for i, t in enumerate(tasks):
-        overall_loss += lambdas[t] * losses[i]
-    overall_loss.backward()
-    feature_optimizer.step()
+class Sine():
+    def __init__(self, train_tasks, test_tasks):
+        self.train_tasks = train_tasks
+        self.test_tasks = test_tasks
+        self.total_tasks = train_tasks + test_tasks
+        self.a = np.random.uniform(0.1, 5, (self.total_tasks,))
+        self.phi = np.random.uniform(0, np.pi, (self.total_tasks,))
 
-    if update_lambdas:
-        for i, t in enumerate(tasks):
-            lambdas[t] += losses[i] * gamma
-        lambdas = simplex_projection(lambdas)
+    def sample_batch(self, task_id, batch_size):
+        x = np.random.uniform(-5, 5, (batch_size,))
+        y = self.a[task_id] * np.sin(x - self.phi[task_id])
+        return torch.tensor(x).unsqueeze(1).type(torch.float32), torch.tensor(y).unsqueeze(1).type(torch.float32)
 
-    if it_outer % 100 == 0:
-        print(f"iteration {it_outer}")
+class Learner():
+    def __init__(self, sine, gamma=0.1, update_lambdas=False):
+        self.gamma = gamma
+        self.update_lambdas = update_lambdas
+        self.task = sine
+        self.embedding_dim = 10
+        self.features = nn.Sequential(
+            nn.Linear(1, 40),
+            nn.ReLU(),
+            nn.Linear(40, 40),
+            nn.ReLU(),
+            nn.Linear(40, self.embedding_dim)
+        )
+        self.heads = [nn.Linear(self.embedding_dim, 1) for _ in range(sine.total_tasks)]
+
+        self.feature_optimizer = torch.optim.Adam(list(self.features.parameters()))
+        self.head_optimizers = [torch.optim.Adam(list(self.heads[i].parameters())) for i in range(sine.total_tasks)]
+
+        self.lambdas = 1/sine.train_tasks * np.ones(sine.train_tasks)
+
+    def inner_loop(self, n_inner=5, tasks_per_batch=5, n_shots=10, mode="train", verbose=True):
+        # sample list of task id's
+        if mode == "train": 
+            # task_list = np.random.choice(self.task.train_tasks, tasks_per_batch, replace=False)
+            task_list = np.arange(10)
+        elif mode == "test":
+            task_list = np.random.choice(self.task.test_tasks, tasks_per_batch, replace=False) + self.task.train_tasks
+        
+        for task in task_list: 
+            self.head_optimizers[task].zero_grad()
+            
+            # get inner loop data
+            xs, ys = self.task.sample_batch(task, n_shots)
+
+            # calculate value of outer loop
+            embedding = self.features(xs)
+
+            # optimize weights for inner loop
+            for it_inner in range(n_inner):
+                # regularization
+                l2_reg_constant = 0.01
+                l2_reg = 0
+                for p in self.heads[task].parameters():
+                    l2_reg += p.norm(2)
+
+                # network loss
+                y_preds = self.heads[task](embedding)
+                loss_fn = nn.MSELoss()
+                total_loss = loss_fn(y_preds, ys) + l2_reg_constant * l2_reg
+
+                # backpropagate
+                total_loss.backward(retain_graph=True)
+                self.head_optimizers[task].step()
+        
+        # validation (don't get to tune inner loop)
+        self.feature_optimizer.zero_grad()
+        for a in task_list:
+            self.head_optimizers[a].zero_grad()
+        losses = []
+        for a in task_list:
+            xs, ys = self.task.sample_batch(a, n_shots)
+            embedding = self.features(xs)
+            y_preds = self.heads[a](embedding)
+            # print("pred: ", y_preds.detach().numpy().flatten())
+            # print("act: ", ys.numpy().flatten())
+            loss_fn = nn.MSELoss()
+            total_loss = loss_fn(y_preds, ys)
+            if verbose:
+                print(f"task {a}, loss: {total_loss}")
+            losses.append(total_loss)
+        return losses, task_list
+
+    def learn(self):
+        all_losses = []
+        for it_outer in range(1000):
+            # perform inner loop
+            task_losses, tasks = self.inner_loop(tasks_per_batch=10, verbose=False)
+            # print(f"losses!: {np.array([i.item() for i in task_losses])}")
+
+            # calculate overall loss (using lambda weights)
+            overall_loss = 0
+            for i, t in enumerate(tasks):
+                overall_loss += self.lambdas[t] * task_losses[i]
+
+            # backpropagation and lambda
+            overall_loss.backward()
+            self.feature_optimizer.step()
+
+            if self.update_lambdas:
+                for i, t in enumerate(tasks):
+                    self.lambdas[t] += task_losses[i] * self.gamma
+                self.lambdas = simplex_projection(self.lambdas)
+
+            # log average loss for graphing purposes
+            all_losses.append(overall_loss.item())
+
+            if it_outer % 100 == 0:
+                print(f"iteration {it_outer}")
+                print(f"losses!: {np.array([i.item() for i in task_losses])}")
+                # print(f"tasks: {tasks)
+                print(f"lambdas: {self.lambdas[:10]}")
+        
+        return all_losses
+
+    def evaluate(self, task_size = 100, mode="test"):
+        loss = 0
+        max_loss = 0
+        for i in range(task_size):
+            batch_loss, tasks = self.inner_loop(mode=mode, tasks_per_batch=10, n_inner=20, verbose=False)
+            loss += sum([i.item() for i in batch_loss])/len(batch_loss)
+            max_loss += max([i.item() for i in batch_loss])
+
+        print(f"test loss {loss / task_size}")
+        print(f"max test loss {max_loss / task_size}")
+
+sine_task = Sine(train_tasks, test_tasks)
+learner_lambdas = Learner(sine_task, update_lambdas=True)
+loss_lambdas = learner_lambdas.learn()
+
+learner_nolambdas = Learner(sine_task, update_lambdas=False)
+loss_nolambdas = learner_nolambdas.learn()
+
+print(learner_lambdas.evaluate(mode="test"))
+print(learner_lambdas.evaluate(mode="train"))
+print(learner_nolambdas.evaluate(mode="test"))
+print(learner_nolambdas.evaluate(mode="train"))
+
+from matplotlib import pyplot as plt
+plt.plot(range(len(loss_lambdas)), loss_lambdas, label='lambdas')
+plt.plot(range(len(loss_nolambdas)), loss_nolambdas, label='no lambdas')
+plt.legend()
+plt.show()
+
+# # losses = []
+# gamma = 0.1
+
+# update_lambdas = True
+# all_losses = []
+# for it_outer in range(1000):
+#     losses, tasks = inner_loop(batch_size=10, verbose=False)
+#     overall_loss = 0
+#     for i, t in enumerate(tasks):
+#         overall_loss += lambdas[t] * losses[i]
+#     all_losses.append(overall_loss.item())
+#     overall_loss.backward()
+#     feature_optimizer.step()
+
+#     if update_lambdas:
+#         for i, t in enumerate(tasks):
+#             lambdas[t] += losses[i] * gamma
+#         lambdas = simplex_projection(lambdas)
+
+#     if it_outer % 100 == 0:
+#         print(f"iteration {it_outer}")
         # print(f"losses!: {np.array([i.item() for i in losses])}")
         # print(f"tasks: {tasks)
         # print(f"lambdas: {lambdas[:10]}")
         
     # losses.append(train_loss.item())
 
-    # all_parameters = list(features.parameters())
-    # for i in range(total_tasks):
-    #     all_parameters += list(heads[i].parameters())
+#     # all_parameters = list(features.parameters())
+#     # for i in range(total_tasks):
+#     #     all_parameters += list(heads[i].parameters())
 
-    # torch.autograd.functional.hessian(lambda x:heads[0](features(x)), tuple(all_parameters))
-
-test_loss = 0
-test_max_loss = 0
-test_sz = 100
-for i in range(test_sz):
-    batch_loss, tasks = inner_loop(mode="val", batch_size=10, n_inner=20, verbose=False)
-    test_loss += sum([i.item() for i in batch_loss])/10
-    test_max_loss += max([i.item() for i in batch_loss])
-
-train_loss = 0
-train_max_loss = 0
-for i in range(test_sz):
-    batch_loss, tasks = inner_loop(mode="train", batch_size=10, n_inner=20, verbose=False)
-    train_loss += sum([i.item() for i in batch_loss])/10
-    train_max_loss += max([i.item() for i in batch_loss])
-
-print(f"update lambdas: {update_lambdas}")
-print(f"train loss {train_loss / test_sz}")
-print(f"train max loss {train_max_loss / test_sz}")
-print(f"test loss {test_loss / test_sz}")
-print(f"max test loss {test_max_loss / test_sz}")
-
+#     # torch.autograd.functional.hessian(lambda x:heads[0](features(x)), tuple(all_parameters))
 # from matplotlib import pyplot as plt
-# plt.plot(range(len(losses)), losses)
+# plt.plot(range(len(all_losses)), all_losses)
 # plt.show()
+# test_loss = 0
+# test_max_loss = 0
+# test_sz = 100
+# for i in range(test_sz):
+#     batch_loss, tasks = inner_loop(mode="val", batch_size=10, n_inner=20, verbose=False)
+#     test_loss += sum([i.item() for i in batch_loss])/10
+#     test_max_loss += max([i.item() for i in batch_loss])
+
+# train_loss = 0
+# train_max_loss = 0
+# for i in range(test_sz):
+#     batch_loss, tasks = inner_loop(mode="train", batch_size=10, n_inner=20, verbose=False)
+#     train_loss += sum([i.item() for i in batch_loss])/10
+#     train_max_loss += max([i.item() for i in batch_loss])
+
+# print(f"update lambdas: {update_lambdas}")
+# print(f"train loss {train_loss / test_sz}")
+# print(f"train max loss {train_max_loss / test_sz}")
+# print(f"test loss {test_loss / test_sz}")
+# print(f"max test loss {test_max_loss / test_sz}")
+
+
 
 
