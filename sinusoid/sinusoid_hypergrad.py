@@ -83,7 +83,7 @@ class Learner():
             loss_fn = nn.MSELoss()
             total_loss = loss_fn(y_preds, ys)
             return total_loss
-        return hg.GradientDescent(loss, step_size=0.01)
+        return hg.GradientDescent(loss, step_size=0.1)
                 
     def test_full_batch(self, mode='train'):
         if mode == 'train':
@@ -131,12 +131,6 @@ class Learner():
                 loss_fn = nn.MSELoss()
                 total_loss = loss_fn(y_preds, ys) + l2_reg_constant * l2_reg
 
-                hg.fixed_point(params=list(self.heads[task_id].parameters()), 
-                    hparams=list(self.features.parameters()),
-                    K=100, 
-                    fp_map=self.inner_loss(task_id),
-                    outer_loss=self.outer_loss(task_id))
-
                 # backpropagate
                 total_loss.backward(retain_graph=True)
                 self.head_optimizers[task_id].step()
@@ -172,6 +166,13 @@ class Learner():
             for i, t in enumerate(tasks):
                 overall_loss += self.lambdas[t] * task_losses[i]
 
+            for task_id in tasks:
+                hg.fixed_point(params=list(self.heads[task_id].parameters()), 
+                    hparams=list(self.features.parameters()),
+                    K=10, 
+                    fp_map=self.inner_loss(task_id),
+                    outer_loss=self.outer_loss(task_id))
+                    
             # backpropagation and lambda
             overall_loss.backward()
             self.feature_optimizer.step()
