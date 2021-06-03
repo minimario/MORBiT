@@ -193,7 +193,7 @@ def run_with_step_size(lambdas=True, use_schedule=True,
     with open(f"runs/{lambdas}_{run_id}.pkl", "wb") as f:
         pickle.dump(data, f)
 
-n_outer = 10
+n_outer = 6000
 for i in range(20):
     try:
         run_with_step_size(True, False, 0.007, 0.005, 0.003, 1, n_outer, 2, 10, 2*i) # with lambdas
