@@ -116,29 +116,31 @@ def wnorm(w, p: int):
 
 
 if __name__ == '__main__':
-    ## dpath = '/home/pari/data/torchvision/'
-    ## for dname in ['MNIST', 'FashionMNIST']:
-    ##     ddict = get_data(dname, dpath)
-    ##     for k, v in ddict.items():
-    ##         logger.info(f"Data: {dname}+{k}")
-    ##         logger.info(f'- Features: {v.data.shape}')
-    ##         logger.info(f'- Labels: {v.targets.shape}')
-    ##         logger.info(f'  - {np.unique(v.targets.numpy())}')
-    ##     task = (4, 7)
-    ##     td = get_task_data(ddict, task, dname=='MNIST')
-    ##     for k, v in td.items():
-    ##         if isinstance(v, tuple):
-    ##             X, y = v
-    ##             logger.info(f'Task: {task}, set: {k}, sizes: ({X.shape}, {y.shape})')
-    ##             logger.info(f'Task: {task}, set: {k}, labels: {np.unique(y.numpy(), return_counts=True)}')
-    ##             continue
-    ##         logger.info(f'Task: {task}, {k}: {v}')
+    logger.info(f'Running data fetching tools ...')
+    dpath = '/home/pari/data/torchvision/'
+    for dname in ['MNIST', 'FashionMNIST']:
+        ddict = get_data(dname, dpath)
+        for k, v in ddict.items():
+            logger.info(f"Data: {dname}+{k}")
+            logger.info(f'- Features: {v.data.shape}')
+            logger.info(f'- Labels: {v.targets.shape}')
+            logger.info(f'  - {np.unique(v.targets.numpy())}')
+        task = (4, 7)
+        td = get_task_data(ddict, task, dname=='MNIST')
+        for k, v in td.items():
+            if isinstance(v, tuple):
+                X, y = v
+                logger.info(f'Task: {task}, set: {k}, sizes: ({X.shape}, {y.shape})')
+                logger.info(f'Task: {task}, set: {k}, labels: {np.unique(y.numpy(), return_counts=True)}')
+                continue
+            logger.info(f'Task: {task}, {k}: {v}')
+    logger.info(f'Evaluating simplex projection ...')
     for v in [
             torch.Tensor([0.2, 0.4, 0.3]),
             torch.Tensor([0.7, 0.4, 0.3]),
             torch.Tensor([-0.1, 1.4, 0.5]),
             torch.Tensor([0.2])
     ]:
-        print('In:', v)
+        logger.info(f'In: {v}')
         simplex_proj_inplace(v, z=1)
-        print('Out:', v)
+        logger.info(f'Out: {v}')
