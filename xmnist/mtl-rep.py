@@ -485,7 +485,7 @@ if __name__ == '__main__':
     }
     args = parser.parse_args()
     expt_tag = '_'.join([
-        f'{odict[k]}-{args.__dict__[k]}'
+        f'{odict[k]}:{args.__dict__[k]}'
         for k in sorted(args.__dict__.keys())
         if k in odict
     ])
