@@ -13,6 +13,30 @@ logger = logging.getLogger('UTILS')
 logger.setLevel(logging.INFO)
 
 
+def args2tag(parser, args):
+    logger.info(f'Generating experiment tag ...')
+    ostrings = [
+        s.replace('-', '')
+        for s in list(parser.__dict__['_option_string_actions'].keys())
+    ]
+    assert len(ostrings) % 2 == 0
+    odict = {
+        ostrings[2*i]: ostrings[2*i + 1]
+        for i in range(len(ostrings) // 2)
+        if ostrings[2*i] not in [
+                'path_to_data',
+                'output_dir',
+                'help', 'h'
+        ]
+    }
+    expt_tag = '_'.join([
+        f'{odict[k]}:{args.__dict__[k]}'
+        for k in sorted(args.__dict__.keys())
+        if k in odict
+    ])
+    logger.info(f'... experiment tag generated')
+    return expt_tag
+
 def pull_data(dfunc, path_to_data):
 
     ret = []

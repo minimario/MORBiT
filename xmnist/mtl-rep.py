@@ -18,32 +18,6 @@ logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger('MTL-REP')
 logger.setLevel(logging.INFO)
 
-# NCLASSES = 2
-# tasks = [
-#     (0, 4),
-#     (3, 8),
-#     (4, 7),
-#     (5, 8),
-#     (1, 7),
-#     (4, 9),
-# ]
-# test_tasks = [
-#     (2, 6),
-#     (0, 5),
-#     (3, 5),
-#     (7, 9),
-#     (0, 1),
-# ]
-#
-# IN_DIM = in_dim
-# INT_DIM = 32
-# BATCH_SIZE = 32
-# LRATE = 0.001
-# IN_ITER = 1
-# OUT_ITER = 1000
-# NLIN = True
-# INREG = 0.00 if NLIN else 0.001
-# OUTREG = 0.00 if NLIN else 0.0001
 
 def run_opt(
         TASKS,
@@ -76,7 +50,7 @@ def run_opt(
 
     loss = nn.CrossEntropyLoss()
 
-    # OUTER LEVEL TASKS
+    # OUTER LEVEL VARS
     outer_var = nn.Linear(IN_DIM, INT_DIM, bias=False)
     out_opt = torch.optim.SGD(
         outer_var.parameters(),
@@ -88,7 +62,7 @@ def run_opt(
         out_opt, step_size=30, gamma=LR_DECAY, verbose=False
     )
 
-    # INNER LEVEL TASKS
+    # INNER LEVEL VARS
     ntasks = len(TASKS)
     inner_vars = [nn.Linear(INT_DIM, NCLASSES) for _ in TASKS]
     in_opts, in_scheds = [], []
@@ -245,7 +219,6 @@ def run_opt(
             # invoke learning scheduler
             if not (CONS_LR_DECAY and batch_stats):
                 tsch.step()
-
         # print some stats
         if not batch_stats:
             logger.info(f'[{oi+1}/{OUT_ITER}] IN LOSSES: {np.array(in_losses)}')
