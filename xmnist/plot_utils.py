@@ -27,7 +27,7 @@ del_file = 'opt_deltas.cvs'
 uns_file = 'objs_unseen_tasks.csv'
 
 PATH = './mtl-res'
-configs = [c.path for c in os.scandir(PATH) if c.is_dir()]
+configs = sorted([c.path for c in os.scandir(PATH) if c.is_dir()])
 print(f'Found {len(configs)} configs in {PATH}')
 # print(configs)
 nminmax = np.sum([('M:True' in c) for c in configs])
@@ -48,7 +48,7 @@ colors = {
 colors1 = ['g', 'y', 'k']
 
 METRICS = list(colors.keys())
-    
+
 
 for c in configs:
     minmax = ('M:True' in c)
@@ -92,8 +92,8 @@ for c in configs:
             assert np.sum(np.std(np.array(per_task_xs), axis=0)) == 0.0, (
                 f'task x STDs: {np.std(np.array(per_task_xs), axis=0)}'
             )
-            ax.plot(xvals, task_mean_ys, c=colors[m], ls='--', linewidth=LW, label='MEAN-' + m)
-            ax.plot(xvals, task_max_ys, c=colors[m], ls='-', linewidth=LW, label='MAX-' + m)
+            ax.plot(xvals, task_mean_ys, c=colors[m], ls='--', linewidth=LW, label='S-MEAN-' + m)
+            ax.plot(xvals, task_max_ys, c=colors[m], ls='-', linewidth=LW, label='S-MAX-' + m)
     # handle stats for unseen tasks
     df = pd.read_csv(os.path.join(c, uns_file))
     print(f'Read in {uns_file} of size {df.shape}')
@@ -119,12 +119,12 @@ for c in configs:
         assert np.sum(np.std(np.array(per_task_xs), axis=0)) == 0.0, (
             f'task x STDs: {np.std(np.array(per_task_xs), axis=0)}'
         )
-        ax.plot(xvals, task_mean_ys, c=unseen_color, ls='--', linewidth=LW, label=f'MEAN-f-{ntrain}')
-        ax.plot(xvals, task_max_ys, c=unseen_color, ls='-', linewidth=LW, label=f'MAX-f-{ntrain}')
+        ax.plot(xvals, task_mean_ys, c=unseen_color, ls='--', linewidth=LW, label=f'U-MEAN-f-te-{ntrain}')
+        ax.plot(xvals, task_max_ys, c=unseen_color, ls='-', linewidth=LW, label=f'U-MAX-f-te-{ntrain}')
     ax.grid(axis='both')
     if cidx == 0 and ridx == 1:
         ax.legend(loc='upper left', ncol=2, bbox_to_anchor=(0, -0.1), fontsize=TITLEFONT)
-    ax.set_title('SEEN ' + (r'$\bf{MINMAX}$' if minmax else r'$\bf{AVG}$') + ' OBJ')
+    ax.set_title((r'$\bf{MINMAX}$' if minmax else r'$\bf{AVG}$') + 'OBJ')
     ax.text(250, 0.6, title, fontsize=TITLEFONT)
     cidxs[ridx] += 1
     # break

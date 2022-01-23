@@ -71,7 +71,7 @@ def run_opt(
         FULL_STATS_PER_ITER=10,
         TOL=1e-7,
         TOBJ_MAX_EPOCHS=1000,
-        
+
 ):
 
     loss = nn.CrossEntropyLoss()
@@ -142,8 +142,10 @@ def run_opt(
     # statistics for change in variables during optimization for seen tasks
     delta_stats_col = [
         'oiter', # outer iter
-        'task', # task ID for inner_var or ALL for outer_var
+        'task', # task ID for inner_var or ALL for outer_var or SIMP for simplex_vars
         'delta', # change in variables
+        'lr', # current learning rate for variable
+        'lambda', # weight for current task; when outer_var or simplex_vars is NA
     ]
     delta_stats = []
 
@@ -207,8 +209,6 @@ def run_opt(
                 topt.step()
                 total_obj += btloss.item()
                 # break
-            # if not batch_stats:
-            tsch.step()
             total_loss /= IN_ITER
             total_obj /= IN_ITER
             in_losses += [total_loss]
@@ -237,9 +237,14 @@ def run_opt(
             outer_loss += (tlambda * toloss)
             out_losses += [toloss.item()]
             # collect delta stats
-            in_delta = torch.linalg.norm(tw.weight - inner_old)
+            current_lr = tsch.get_last_lr()[0]
+            with torch.no_grad():
+                in_delta = torch.linalg.norm(tw.weight - inner_old)
             in_deltas += [in_delta.item()]
-            delta_stats += [(oi+1, t, in_delta.item())]
+            delta_stats += [(oi+1, t, in_delta.item(), current_lr, tlambda.item())]
+            # invoke learning scheduler
+            # if not batch_stats:
+            tsch.step()
 
         # print some stats
         if not batch_stats:
@@ -269,26 +274,38 @@ def run_opt(
             bo_iter = oi + 1
         outer_loss.backward(retain_graph=True)
         out_opt.step()
-        out_delta = torch.linalg.norm(outer_var.weight - outer_old)
+        # save delta stats
+        with torch.no_grad():
+            out_delta = torch.linalg.norm(outer_var.weight - outer_old)
         logger.info(f'[{oi+1}/{OUT_ITER}] OUT Delta: {out_delta.item():.6f}')
+        curr_lr = out_sched.get_last_lr()[0]
+        delta_stats += [(oi+1, 'ALL', out_delta.item(), curr_lr, np.nan)]
+
+        # invoke learning rate scheduler
         # if not batch_stats:
         out_sched.step()
+
+        # Update simplex lambda if minmax
         logger.info(f'[{oi+1}/{OUT_ITER}] Lambdas: {simplex_vars}')
-        lambda_delta = 0.
         if MINMAX:
             # negate gradient for gradient ascent
             simplex_vars.grad *= -1.
             logger.debug(f'[{oi+1}/{OUT_ITER}] - Lambda grads: {simplex_vars.grad}')
             simplex_opt.step()
             logger.info(f'[{oi+1}/{OUT_ITER}] - Updated Lambdas: {simplex_vars}')
-            # if not batch_stats:
-            simplex_sched.step()
             simplex_proj_inplace(simplex_vars)
             logger.info(f'[{oi+1}/{OUT_ITER}] - Simplex projected updated Lambdas: {simplex_vars}')
-            lambda_delta = torch.linalg.norm(simplex_vars - old_simplex_vars)
+            curr_lr = simplex_sched.get_last_lr()[0]
+            with torch.no_grad():
+                lambda_delta = torch.linalg.norm(simplex_vars - old_simplex_vars)
             logger.info(f'[{oi+1}/{OUT_ITER}] - lambda delta: {lambda_delta.item():.6f}')
-            simplex_vars.requires_grad = True
-        delta_stats += [(oi+1, 'ALL', out_delta.item())]
+            delta_stats += [(oi+1, 'SIMPLE', lambda_delta.item(), curr_lr, np.nan)]
+            # update out_delta to include lambda delta
+            out_delta += lambda_delta
+            # invoke learning rate scheduler
+            # if not batch_stats:
+            simplex_sched.step()
+            assert simplex_vars.requires_grad
         in_delta_sum = np.sum(in_deltas)
         converged = (in_delta_sum < TOL) and (out_delta < TOL)
         if (not batch_stats) or (converged):
@@ -578,7 +595,7 @@ if __name__ == '__main__':
     print('Unseen all stats', tastats.shape)
     print(tastats.head(10))
     print(tastats.tail(10))
-    
+
 
     if args.output_dir != '':
         os.mkdir(output_dir)
