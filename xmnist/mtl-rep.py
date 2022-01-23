@@ -71,7 +71,7 @@ def run_opt(
         FULL_STATS_PER_ITER=10,
         TOL=1e-7,
         TOBJ_MAX_EPOCHS=1000,
-
+        CONS_LR_DECAY=False,
 ):
 
     loss = nn.CrossEntropyLoss()
@@ -243,8 +243,8 @@ def run_opt(
             in_deltas += [in_delta.item()]
             delta_stats += [(oi+1, t, in_delta.item(), current_lr, tlambda.item())]
             # invoke learning scheduler
-            # if not batch_stats:
-            tsch.step()
+            if not (CONS_LR_DECAY and batch_stats):
+                tsch.step()
 
         # print some stats
         if not batch_stats:
@@ -282,8 +282,8 @@ def run_opt(
         delta_stats += [(oi+1, 'ALL', out_delta.item(), curr_lr, np.nan)]
 
         # invoke learning rate scheduler
-        # if not batch_stats:
-        out_sched.step()
+        if not (CONS_LR_DECAY and batch_stats):
+            out_sched.step()
 
         # Update simplex lambda if minmax
         logger.info(f'[{oi+1}/{OUT_ITER}] Lambdas: {simplex_vars}')
@@ -303,8 +303,8 @@ def run_opt(
             # update out_delta to include lambda delta
             out_delta += lambda_delta
             # invoke learning rate scheduler
-            # if not batch_stats:
-            simplex_sched.step()
+            if not (CONS_LR_DECAY and batch_stats):
+                simplex_sched.step()
             assert simplex_vars.requires_grad
         in_delta_sum = np.sum(in_deltas)
         converged = (in_delta_sum < TOL) and (out_delta < TOL)
@@ -485,6 +485,7 @@ if __name__ == '__main__':
     parser.add_argument('--tolerance', '-x', type=float, default=1e-7, help='Tolerance of optimization')
     parser.add_argument('--tobj_max_epochs', '-E', type=int, default=100, help='Max epochs for test tasks')
     parser.add_argument('--output_dir', '-U', type=str, default='', help='Directory to save results in')
+    parser.add_argument('--cons_lr_decay', '-C', action='store_true', help='Decay LR more conservatively')
 
     ostrings = [
         s.replace('-', '')
@@ -584,6 +585,7 @@ if __name__ == '__main__':
         FULL_STATS_PER_ITER=args.full_stats_per_iter,
         TOL=args.tolerance,
         TOBJ_MAX_EPOCHS=args.tobj_max_epochs,
+        CONS_LR_DECAY=args.cons_lr_decay,
     )
 
     print('All stats: ', astats.shape)
