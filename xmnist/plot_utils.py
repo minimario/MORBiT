@@ -8,8 +8,16 @@ warnings.simplefilter('ignore')
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 import pickle
+
+import logging
+logging.basicConfig(stream=sys.stdout)
+logger = logging.getLogger('PLOT-MTL-REP')
+logger.setLevel(logging.INFO)
+
+
 
 DPI=100
 LW=1.0
@@ -28,11 +36,11 @@ uns_file = 'objs_unseen_tasks.csv'
 
 PATH = './mtl-res'
 configs = sorted([c.path for c in os.scandir(PATH) if c.is_dir()])
-print(f'Found {len(configs)} configs in {PATH}')
+logger.info(f'Found {len(configs)} configs in {PATH}')
 # print(configs)
 nminmax = np.sum([('M:True' in c) for c in configs])
 navg = np.sum([('M:False' in c) for c in configs])
-print(f' -- Minmax: {nminmax}, Avg: {navg}')
+logger.info(f' -- Minmax: {nminmax}, Avg: {navg}')
 assert nminmax + navg == len(configs)
 ncols = max(nminmax, navg, 2)
 nrows = 2
@@ -50,7 +58,7 @@ colors1 = ['g', 'y', 'k']
 METRICS = list(colors.keys())
 
 
-for c in configs:
+for c in tqdm(configs):
     minmax = ('M:True' in c)
     ridx = int(minmax)
     cidx = cidxs[ridx]
@@ -65,11 +73,11 @@ for c in configs:
         sidx += TITLEPARAMS
         if sidx < len(cparams):
             title += '\n'
-    print(f'Plot title:\n{title}')
+    logger.debug(f'Plot title:\n{title}')
 
     # handle stats for seen tasks
     df = pd.read_csv(os.path.join(c, opt_file))
-    print(f'Read in {opt_file} of size {df.shape}')
+    logger.debug(f'Read in {opt_file} of size {df.shape}')
     for b, bdf in df.groupby(['batch']):
         if b: continue
         for m in METRICS:
@@ -78,7 +86,7 @@ for c in configs:
             for t, tdf in bdf.groupby(['task']):
                 xvals = tdf['oiter'].values
                 yvals = tdf[m].values
-                print(f'... task {t} ... X: {xvals.shape} ... Y: {yvals.shape}')
+                logger.debug(f'... task {t} ... X: {xvals.shape} ... Y: {yvals.shape}')
                 per_task_ys += [yvals]
                 per_task_xs += [xvals]
                 ax.plot(
@@ -96,7 +104,7 @@ for c in configs:
             ax.plot(xvals, task_max_ys, c=colors[m], ls='-', linewidth=LW, label='S-MAX-' + m)
     # handle stats for unseen tasks
     df = pd.read_csv(os.path.join(c, uns_file))
-    print(f'Read in {uns_file} of size {df.shape}')
+    logger.debug(f'Read in {uns_file} of size {df.shape}')
     color_idx = 0
     for ntrain, ndf in df.groupby(['ntrain']):
         unseen_color = colors1[color_idx]
@@ -105,7 +113,7 @@ for c in configs:
         for t, tdf in ndf.groupby(['task']):
             xvals = tdf['oiter'].values
             yvals = np.minimum.accumulate(tdf['f-obj'].values)
-            print(f'... train size: {ntrain} ... task {t} ... X: {xvals.shape} ... Y: {yvals.shape}')
+            logger.debug(f'... train size: {ntrain} ... task {t} ... X: {xvals.shape} ... Y: {yvals.shape}')
             per_task_ys += [yvals]
             per_task_xs += [xvals]
             ax.plot(
