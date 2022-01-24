@@ -54,7 +54,7 @@ def run_base_opt(
     )
     out_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
         out_opt, 'min', factor=LR_DECAY, verbose=True,
-        patience=10,
+        patience=20,
     )
 
     # INNER LEVEL VARS
@@ -67,7 +67,7 @@ def run_base_opt(
     )
     tsched = torch.optim.lr_scheduler.ReduceLROnPlateau(
         topt, 'min', factor=LR_DECAY, verbose=True,
-        patience=10,
+        patience=20,
     )
 
     # Functions used by all tasks and level -- not optimized
@@ -326,6 +326,9 @@ if __name__ == '__main__':
     assert args.full_stats_per_iter > 1
     assert args.tolerance > 0.
 
+    np.random.seed(args.random_seed)
+    random.seed(args.random_seed)
+
     full_data = get_data(args.data, args.path_to_data)
     input_dim = full_data['train'].data.shape
     all_labels = np.unique(full_data['train'].targets.numpy())
@@ -349,10 +352,17 @@ if __name__ == '__main__':
 
     all_astats, all_dstats = [], []
     for t, tdata in zip(all_tasks, task_data):
+        X, _ = tdata['train']
+        max_X = torch.max(X).item()
+        X /= max_X
+        tX, _ = tdata['test']
+        tX /= max_X
+        if 'val' in tdata:
+            vX, _ = tdata['val']
+            vX /= max_X
+
         RNG = np.random.RandomState(args.random_seed)
         torch.manual_seed(args.random_seed)
-        np.random.seed(args.random_seed)
-        random.seed(args.random_seed)
         astats, dstats = run_base_opt(
             TASK=t,
             TASK_DATA=tdata,
