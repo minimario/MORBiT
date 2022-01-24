@@ -378,8 +378,6 @@ if __name__ == '__main__':
         )
         all_astats += [astats]
         all_dstats += [dstats]
-        if len(all_astats) > 5:
-            break
 
     astats = pd.concat(all_astats)
     dstats = pd.concat(all_dstats)
