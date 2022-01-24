@@ -326,11 +326,6 @@ if __name__ == '__main__':
     assert args.full_stats_per_iter > 1
     assert args.tolerance > 0.
 
-    RNG = np.random.RandomState(args.random_seed)
-    torch.manual_seed(args.random_seed)
-    np.random.seed(args.random_seed)
-    random.seed(args.random_seed)
-
     full_data = get_data(args.data, args.path_to_data)
     input_dim = full_data['train'].data.shape
     all_labels = np.unique(full_data['train'].targets.numpy())
@@ -354,6 +349,10 @@ if __name__ == '__main__':
 
     all_astats, all_dstats = [], []
     for t, tdata in zip(all_tasks, task_data):
+        RNG = np.random.RandomState(args.random_seed)
+        torch.manual_seed(args.random_seed)
+        np.random.seed(args.random_seed)
+        random.seed(args.random_seed)
         astats, dstats = run_base_opt(
             TASK=t,
             TASK_DATA=tdata,
