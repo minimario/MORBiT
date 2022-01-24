@@ -15,11 +15,15 @@ from utils import get_data, get_task_data, wnorm
 
 import logging
 logging.basicConfig(stream=sys.stdout)
-logger = logging.getLogger('MTL-BASE')
+logger = logging.getLogger('SVM-RFF-BASE')
 logger.setLevel(logging.INFO)
 
 
-def run_base_opt(
+def RFF2(lG, W, f, feats):
+    return f * torch.cos(torch.exp(lG) * torch.matmul(feats, W))
+
+
+def run_base_hpo(
         TASK,
         TASK_DATA,
         RNG,
@@ -33,21 +37,20 @@ def run_base_opt(
         LR_DECAY=0.8,
         IN_ITER=1,
         OUT_ITER=1000,
-        NLIN=False,
-        INREG=0.001,
-        OUTREG=0.0001,
-        INNORM=2,
-        OUTNORM=2,
         FULL_STATS_PER_ITER=10,
         TOL=1e-7,
 ):
-
-    loss = nn.CrossEntropyLoss()
-
     # OUTER LEVEL VARS
-    outer_var = nn.Linear(IN_DIM, INT_DIM, bias=False)
+    logC = torch.tensor(-1.0)
+    logC.requires_grad = True
+    logG = torch.tensor(0.0)
+    logG.requires_grad = True
     out_opt = torch.optim.SGD(
-        outer_var.parameters(),
+        # [
+        #     {'params': logC, 'lr': LRATE_OUT,},
+        #     {'params': logG, 'lr': 0.1 * LRATE_OUT,},
+        # ],
+        [logC, logG],
         lr=LRATE_OUT,
         momentum=0.9,
         weight_decay=1e-4,
@@ -56,7 +59,6 @@ def run_base_opt(
         out_opt, 'min', factor=LR_DECAY, verbose=True,
         patience=20,
     )
-
     # INNER LEVEL VARS
     inner_var = nn.Linear(INT_DIM, NCLASSES)
     topt = torch.optim.SGD(
@@ -72,7 +74,11 @@ def run_base_opt(
 
     # Functions used by all tasks and level -- not optimized
     in_softmax = nn.Softmax(dim=1)
-    out_nlin = nn.ReLU()
+    loss = nn.CrossEntropyLoss()
+
+    # PER-TASK RFF PROJECTION MATRIX
+    PROJ = (1/ np.sqrt(IN_DIM)) * torch.normal(0., 1., size=(IN_DIM, INT_DIM))
+    PROJ.requires_grad = False
 
     # Setting up stats to be collected
 
@@ -83,10 +89,10 @@ def run_base_opt(
         'task', # task ID
         'g-loss', # inner level loss (full or batch)
         'g-obj', # inner level obj (full or batch)
-        'f-va-loss', # outer level loss (full or batch)
         'f-va-obj', # outer level obj (full or batch)
-        'f-te-loss', # outer level loss on unseen data (full); when batch is NA
         'f-te-obj', # outer level obj on unseen data (full); when batch is NA
+        'logC',
+        'logG',
     ]
     all_stats = []
 
@@ -96,6 +102,8 @@ def run_base_opt(
         'task', # task ID for inner_var or ALL for outer_var or SIMP for simplex_vars
         'delta', # change in variables
         'lr', # current learning rate for variable
+        'logC',
+        'logG',
     ]
     delta_stats = []
 
@@ -103,11 +111,13 @@ def run_base_opt(
     bout_obj = np.inf
     bl_iter = 0
     bo_iter = 0
+    factor = 1.0
 
     prefix = f'{TASK}'
     t = TASK
     tdata = TASK_DATA
     tw = inner_var
+    proj = PROJ
     for oi in range(OUT_ITER):
         logger.info(f'Starting outer loop {oi+1}/{OUT_ITER} ...')
         batch_stats = ((oi+1) % FULL_STATS_PER_ITER != 0)
@@ -117,27 +127,27 @@ def run_base_opt(
         in_loss = 0.
         in_obj = 0.
         in_delta = 0.
-        outer_old = outer_var.weight.clone()
+        outer_old = [logC.item(), logG.item()]
         ppr = f'{prefix}->[{oi+1}/{OUT_ITER}]'
         tsize = tdata['train-size']
         X, y = tdata['train']
         total_loss = 0.
         total_obj = 0.
         inner_old = tw.weight.clone()
+        # Inner loop
         for ii in range(IN_ITER):
             topt.zero_grad()
-            bidxs = [RNG.randint(0, tsize) for _ in range(BATCH_SIZE)]
+            bidxs = [np.random.randint(0, tsize) for _ in range(BATCH_SIZE)]
             bX = X[bidxs]
             by = y[bidxs]
-            int_rep = out_nlin(outer_var(bX)) if NLIN else outer_var(bX)
-            out = tw(int_rep)
-            probs = in_softmax(out)
+            probs = in_softmax(tw(RFF2(logG, proj, factor, bX)))
             btloss = loss(probs, by)
+            # tracking loss
             total_loss += btloss.item()
-            if INREG > 0.0:
-                btloss += (INREG * wnorm(tw, INNORM))
+            btloss += (torch.exp(logC) * 0.5 * wnorm(tw, 2))
             btloss.backward(retain_graph=True)
             topt.step()
+            # tracking obj
             total_obj += btloss.item()
         total_loss /= IN_ITER
         total_obj /= IN_ITER
@@ -149,27 +159,27 @@ def run_base_opt(
         bidxs = [RNG.randint(0, vsize) for _ in range(BATCH_SIZE_OUT)]
         bX = vX[bidxs]
         by = vy[bidxs]
-        out = in_softmax(tw(out_nlin(outer_var(bX)))) if NLIN else in_softmax(tw(outer_var(bX)))
-        toloss = loss(out, by)
+        probs = in_softmax(tw(RFF2(logG, proj, factor, bX)))
+        toloss = loss(probs, by)
         toobj = toloss.item()
-        if OUTREG > 0.0:
-            toobj += (OUTREG * wnorm(outer_var, OUTNORM)).item()
         # Computing outer level accuracy on batch
-        _, preds = torch.max(out, 1)
-        out_acc = (by == preds).sum() / bX.size(0)
+        _, preds = torch.max(probs, 1)
+        out_accs = (by == preds).sum() / bX.size(0)
         # collect opt stats
         all_stats += [(
             oi+1, True, t,
             total_loss, total_obj, # g-stuff
-            toloss.item(), toobj, # f-val-stuff
-            np.nan, np.nan #f-te-stuff
+            toobj, # f-val-stuff
+            np.nan, #f-te-stuff
+            logC.item(),
+            logG.item(),
         )]
         outer_loss = toloss
         # collect delta stats
         current_lr = topt.param_groups[0]['lr']
         with torch.no_grad():
             in_delta = torch.linalg.norm(tw.weight - inner_old)
-        delta_stats += [(oi+1, f'{t}-IN', in_delta.item(), current_lr)]
+        delta_stats += [(oi+1, f'{t}-IN', in_delta.item(), current_lr, logC.item(), logG.item())]
         # print some stats
         if not batch_stats:
             logger.info(f'{ppr} IN LOSSES: {np.array([in_loss])}')
@@ -178,67 +188,65 @@ def run_base_opt(
             logger.info(f'{ppr} OUT LOSS: {np.array([outer_loss.item()])}')
             logger.info(f'{ppr} OUT ACCS: {np.array([out_acc])}')
         logger.info(
-            f'{ppr} OUTER LOSS: {outer_loss.item():.8f} '
-            f'(best: {bout_loss:.8f} ({bl_iter}/{OUT_ITER}))'
+            f'[{ppr}] OUTER LOSS: {outer_loss.item():.8f} '
+            f'(best: {bout_obj:.8f} ({bo_iter}/{OUT_ITER}))'
         )
-        if outer_loss.item() < bout_loss:
-            logger.info(f'{ppr} OUT: {np.array([outer_loss.item()])}')
-            bout_loss = outer_loss.item()
-            bl_iter = oi + 1
-
-        # Add regularization and take opt step
-        if OUTREG > 0.0:
-            outer_loss += (OUTREG * wnorm(outer_var, OUTNORM))
-        if not batch_stats:
-            logger.info(
-                f'{ppr} OUTER LOSS + REG: {outer_loss:.8f} '
-                f'(best: {bout_obj:.8f} ({bo_iter}/{OUT_ITER}))'
-            )
         if outer_loss.item() < bout_obj:
             bout_obj = outer_loss.item()
             bo_iter = oi + 1
+        # take optimization step
         outer_loss.backward(retain_graph=True)
+        logger.info(
+            f'[{ppr}] logC: {logC.item():.4f}, grad-logC: {logC.grad.item():.4f}'
+        )
+        logger.info(
+            f'[{ppr}] logG: {logG.item():.4f}, grad-logG: {logG.grad.item():.4f}'
+        )
         out_opt.step()
         # save delta stats
         with torch.no_grad():
-            out_delta = torch.linalg.norm(outer_var.weight - outer_old)
+            delta_logC = abs(logC.item() - outer_old[0])
+            delta_logG = abs(logG.item() - outer_old[1])
+        logger.info(
+            f'[{ppr}] OUT logC: {logC.item():.6f}, Delta(logC): {delta_logC:.6f}'
+        )
+        logger.info(
+            f'[{ppr}] OUT logG: {logG.item():.6f}, Delta(logG): {delta_logG:.6f}'
+        )
         curr_lr = out_opt.param_groups[0]['lr']
-        logger.info(f'[{ppr}] OUT Delta: {out_delta.item():.6f}')
-        delta_stats += [(oi+1, f'{t}-OUT', out_delta.item(), curr_lr)]
+        delta_stats += [(oi+1, 'logC', delta_logC, curr_lr, logC.item(), logG.item())]
+        delta_stats += [(oi+1, 'logG', delta_logG, curr_lr, logC.item(), logG.item())]
+        out_delta = delta_logC + delta_logG
 
         converged = (in_delta < TOL) and (out_delta < TOL)
         if (not batch_stats) or (converged):
+            INREG = torch.exp(logC).item()
             # compute stats on full data
             voobjs, toobjs = [], []
-            logger.info(f'{ppr} Task {t} full-stats comp ....')
+            logger.info(f'[{ppr}] Task {t} full-stats comp ....')
             X, y = tdata['train']
             vX, vy = tdata['val']
             tX, ty = tdata['test']
             with torch.no_grad():
-                train_out = in_softmax(tw(out_nlin(outer_var(X)))) if NLIN else in_softmax(tw(outer_var(X)))
+                train_out = in_softmax(tw(RFF2(logG, proj, factor, X)))
                 train_loss = loss(train_out, y)
                 train_obj = train_loss.item()
-                if INREG > 0.0:
-                    train_obj += (INREG * wnorm(tw, INNORM)).item()
-                val_out = in_softmax(tw(out_nlin(outer_var(vX)))) if NLIN else in_softmax(tw(outer_var(vX)))
+                train_obj += (INREG * 0.5 * wnorm(tw, 2)).item()
+                val_out = in_softmax(tw(RFF2(logG, proj, factor, vX)))
                 val_loss = loss(val_out, vy)
-                val_obj = val_loss.item()
-                if OUTREG > 0.0:
-                    val_obj += (OUTREG * wnorm(outer_var, OUTNORM)).item()
-                test_out = in_softmax(tw(out_nlin(outer_var(tX)))) if NLIN else in_softmax(tw(outer_var(tX)))
+                test_out = in_softmax(tw(RFF2(logG, proj, factor, tX)))
                 test_loss = loss(test_out, ty)
-                test_obj = test_loss.item()
-                if OUTREG > 0.0:
-                    test_obj += (OUTREG * wnorm(outer_var, OUTNORM)).item()
                 all_stats += [(
                     oi+1, False, t,
                     train_loss.item(), train_obj, # g-stuff
-                    val_loss.item(), val_obj, # f-val-stuff
-                    test_loss.item(), test_obj, # f-te-stuff
+                    val_loss.item(), # f-val-stuff
+                    test_loss.item(), # f-te-stuff
+                    logC.item(),
+                    logG.item(),
                 )]
-                voobjs += [val_obj]
-                toobjs += [test_obj]
-            tsched.step(test_obj)
+                voobjs += [val_loss.item()]
+                toobjs += [test_loss.item()]
+            tsched.step(test_loss)
             logger.info(f'[{ppr}] Full outer stats:')
             logger.info(f'[{ppr}] val: {np.array(voobjs)}')
             logger.info(f'[{ppr}] test: {np.array(toobjs)}')
@@ -277,13 +285,8 @@ if __name__ == '__main__':
     )
     parser.add_argument('--inner_loop', '-I', type=int, default=1, help='Number of inner level iterations')
     parser.add_argument('--max_outer_loop', '-O', type=int, default=100, help='Max outer level iters')
-    parser.add_argument('--inner_reg', '-R', type=float, default=0.001, help='Reg. for inner level')
-    parser.add_argument('--outer_reg', '-r', type=float, default=0.0001, help='Reg. for outer level')
-    parser.add_argument('--inner_p', '-P', type=int, default=2, help='Norm order for Reg. for inner level')
-    parser.add_argument('--outer_p', '-p', type=int, default=2, help='Norm order for Reg. for outer level')
     parser.add_argument('--inner_batch_size', '-B', type=int, default=32, help='Batch size for inner level')
     parser.add_argument('--outer_batch_size', '-b', type=int, default=128, help='Batch size for outer level')
-    parser.add_argument('--nonlinear', '-N', action='store_true', help='Nonlinear version')
     parser.add_argument('--random_seed', '-S', type=int, default=5489, help='Random seed for RNG')
     parser.add_argument(
         '--full_stats_per_iter', '-F', type=int, default=10, help='Save full stats every this iters'
@@ -321,7 +324,6 @@ if __name__ == '__main__':
     assert 0. < args.lr_decay < 1.
     assert args.inner_loop > 1
     assert args.max_outer_loop > 1
-    assert args.inner_p in [1, 2] and args.outer_p in [1, 2]
     assert args.inner_batch_size > 1 and args.outer_batch_size > 1
     assert args.full_stats_per_iter > 1
     assert args.tolerance > 0.
@@ -363,7 +365,7 @@ if __name__ == '__main__':
 
         RNG = np.random.RandomState(args.random_seed)
         torch.manual_seed(args.random_seed)
-        astats, dstats = run_base_opt(
+        astats, dstats = run_base_hpo(
             TASK=t,
             TASK_DATA=tdata,
             RNG=RNG,
@@ -377,11 +379,6 @@ if __name__ == '__main__':
             LR_DECAY=args.lr_decay,
             IN_ITER=args.inner_loop,
             OUT_ITER=args.max_outer_loop,
-            NLIN=args.nonlinear,
-            INREG=args.inner_reg,
-            OUTREG=args.outer_reg,
-            INNORM=args.inner_p,
-            OUTNORM=args.outer_p,
             FULL_STATS_PER_ITER=args.full_stats_per_iter,
             TOL=args.tolerance,
         )
@@ -399,17 +396,19 @@ if __name__ == '__main__':
     print(dstats.head(10))
     print(dstats.tail(10))
 
-    tlist, vlist = [], []
+    tlist, vlist, hplist = [], [], []
     for t, tdf in astats.groupby(['task']):
-        best_val_obj = np.min(tdf['f-va-obj'])
-        best_val_loss = np.min(tdf['f-va-loss'])
+        vidx = np.argsort(tdf['f-va-obj'].values)[0]
+        best_val_obj = tdf['f-va-obj'].values[vidx]
+        best_hp = (tdf['logC'].values[vidx], tdf['logG'].values[vidx])
         best_test_obj = np.min(tdf['f-te-obj'])
-        best_test_loss = np.min(tdf['f-te-loss'])
         logger.info(f'Task: {t}')
-        logger.info(f'- Validation: {best_val_loss:.4f} ({best_val_obj:.4f})')
-        logger.info(f'- Test      : {best_test_loss:.4f} ({best_test_obj:.4f})')
+        logger.info(f'- Validation: {best_val_obj:.4f} (logC: {best_hp[0]:.4f}, logG: {best_hp[1]:.4f})')
+        logger.info(f'- Test      : {best_test_obj:.4f}')
         tlist += [t]
         vlist += [best_val_obj]
+        hplist += [best_hp]
+
 
     hard_tasks = np.argsort(vlist)[-3:]
     logger.info(f'Hard tasks: (avg: {np.mean(vlist):.4f} +- {np.std(vlist):.4f})\n ALL:{np.array(vlist)}')
