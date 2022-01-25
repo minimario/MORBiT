@@ -345,7 +345,8 @@ def run_opt(
                         continue
                     # INNER LEVEL TEST TASKS
                     iv = nn.Linear(INT_DIM, NCLASSES)
-                    iv.weight = invar_init.weight
+                    iv.weight.item = invar_init.weight.item
+                    assert iv.weight.requires_grad
                     tin_opt = torch.optim.SGD(
                         iv.parameters(),
                         lr=LRATE,
