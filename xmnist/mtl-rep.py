@@ -45,7 +45,6 @@ def run_opt(
         FULL_STATS_PER_ITER=10,
         TOL=1e-7,
         TOBJ_MAX_EPOCHS=1000,
-        CONS_LR_DECAY=False,
 ):
 
     loss = nn.CrossEntropyLoss()
@@ -55,32 +54,47 @@ def run_opt(
     out_opt = torch.optim.SGD(
         outer_var.parameters(),
         lr=LRATE_OUT,
-        # momentum=0.9,
-        # weight_decay=1e-4,
+        momentum=0.9,
+        weight_decay=1e-4,
     )
-    out_sched = torch.optim.lr_scheduler.StepLR(
-        out_opt, step_size=30, gamma=LR_DECAY, verbose=False
+    # out_sched = torch.optim.lr_scheduler.StepLR(
+    #     out_opt, step_size=30, gamma=LR_DECAY, verbose=False
+    # )
+    out_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        out_opt, 'min', factor=LR_DECAY, verbose=True,
+        patience=20,
     )
+
 
     # INNER LEVEL VARS
     ntasks = len(TASKS)
+    # all tasks start from the same parameter setting for consistency
+    invar_init = nn.Linear(INT_DIM, NCLASSES)
+    invar_init.weight.requires_grad = False
     inner_vars = [nn.Linear(INT_DIM, NCLASSES) for _ in TASKS]
     in_opts, in_scheds = [], []
     for iv in inner_vars:
+        # All inner level vars are being set to same initial value
+        iv.weight.item = invar_init.weight.item
+        assert iv.weight.requires_grad
         in_opt = torch.optim.SGD(
             iv.parameters(),
             lr=LRATE,
-            # momentum=0.9,
-            # weight_decay=1e-4,
+            momentum=0.9,
+            weight_decay=1e-4,
         )
-        in_sched = torch.optim.lr_scheduler.StepLR(
-            in_opt, step_size=30, gamma=LR_DECAY, verbose=False
+        # in_sched = torch.optim.lr_scheduler.StepLR(
+        #     in_opt, step_size=30, gamma=LR_DECAY, verbose=False
+        # )
+        in_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            in_opt, 'min', factor=LR_DECAY, verbose=True,
+            patience=20,
         )
         in_opts += [in_opt]
         in_scheds += [in_sched]
 
     # OPTIONAL: simplex vars
-    simplex_vars, simplex_out, simplex_sched = None, None, None
+    simplex_vars, simplex_opt, simplex_sched = None, None, None
     simplex_vars = torch.Tensor([1./ntasks for i in range(ntasks)])
     if MINMAX:
         simplex_vars.requires_grad = True
@@ -88,9 +102,15 @@ def run_opt(
             [simplex_vars],
             lr=LRATE_SIMP,
             # lr=(LRATE_OUT / np.sqrt(ntasks)),
+            momentum=0.9,
+            weight_decay=1e-4,
         )
-        simplex_sched = torch.optim.lr_scheduler.StepLR(
-            simplex_opt, step_size=30, gamma=LR_DECAY, verbose=False
+        # simplex_sched = torch.optim.lr_scheduler.StepLR(
+        #     simplex_opt, step_size=30, gamma=LR_DECAY, verbose=False
+        # )
+        simples_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            simplex_opt, 'min', factor=LR_DECAY, verbose=True,
+            patience=20,
         )
 
     # Functions used by all tasks and level -- not optimized
@@ -142,6 +162,7 @@ def run_opt(
 
     for oi in range(OUT_ITER):
         logger.info(f'Starting outer loop {oi+1}/{OUT_ITER} ...')
+        ppr = f'{oi+1}/{OUT_ITER}'
         batch_stats = ((oi+1) % FULL_STATS_PER_ITER != 0)
         out_opt.zero_grad()
         if MINMAX:
@@ -158,7 +179,7 @@ def run_opt(
         for t, tdata, tw, topt, tsch, tlambda in zip(
                 TASKS, TASK_DATA, inner_vars, in_opts, in_scheds, simplex_vars
         ):
-            logger.debug(f'[{oi+1}/{OUT_ITER}] Task {t} ....')
+            logger.debug(f'[{ppr}] Task {t} ....')
             tsize = tdata['train-size']
             X, y = tdata['train']
             total_loss = 0.
@@ -166,12 +187,10 @@ def run_opt(
             inner_old = tw.weight.clone()
             for ii in range(IN_ITER):
                 topt.zero_grad()
-                logger.debug(f'[{oi+1}/{OUT_ITER}] [{t}] ({ii+1}/{IN_ITER}) Train size: {tsize}')
+                logger.debug(f'[{ppr}] [{t}] ({ii+1}/{IN_ITER}) Train size: {tsize}')
                 bidxs = [RNG.randint(0, tsize) for _ in range(BATCH_SIZE)]
-                logger.debug(f'     Batch: {bidxs}')
                 bX = X[bidxs]
                 by = y[bidxs]
-                logger.debug(f'     {bX.shape}')
                 int_rep = out_nlin(outer_var(bX)) if NLIN else outer_var(bX)
                 out = tw(int_rep)
                 probs = in_softmax(out)
@@ -182,7 +201,6 @@ def run_opt(
                 btloss.backward(retain_graph=True)
                 topt.step()
                 total_obj += btloss.item()
-                # break
             total_loss /= IN_ITER
             total_obj /= IN_ITER
             in_losses += [total_loss]
@@ -211,23 +229,21 @@ def run_opt(
             outer_loss += (tlambda * toloss)
             out_losses += [toloss.item()]
             # collect delta stats
-            current_lr = tsch.get_last_lr()[0]
+            # current_lr = tsch.get_last_lr()[0] # <=== NOTE: Use this for StepLR
+            current_lr = topt.param_groups[0]['lr'] # <== NOTE: Use this for ReduceLROnPlateau
             with torch.no_grad():
                 in_delta = torch.linalg.norm(tw.weight - inner_old)
             in_deltas += [in_delta.item()]
             delta_stats += [(oi+1, t, in_delta.item(), current_lr, tlambda.item())]
-            # invoke learning scheduler
-            if not (CONS_LR_DECAY and batch_stats):
-                tsch.step()
         # print some stats
         if not batch_stats:
-            logger.info(f'[{oi+1}/{OUT_ITER}] IN LOSSES: {np.array(in_losses)}')
-            logger.info(f'[{oi+1}/{OUT_ITER}] IN OBJS: {np.array(in_objs)}')
-            logger.info(f'[{oi+1}/{OUT_ITER}] IN-Deltas: {np.array(in_deltas)}')
-            logger.info(f'[{oi+1}/{OUT_ITER}] OUT LOSS: {np.array(out_losses)}')
-            logger.info(f'[{oi+1}/{OUT_ITER}] OUT ACCS: {np.array(out_accs)}')
+            logger.info(f'[{ppr}] IN LOSSES: {np.array(in_losses)}')
+            logger.info(f'[{ppr}] IN OBJS: {np.array(in_objs)}')
+            logger.info(f'[{ppr}] IN-Deltas: {np.array(in_deltas)}')
+            logger.info(f'[{ppr}] OUT LOSS: {np.array(out_losses)}')
+            logger.info(f'[{ppr}] OUT ACCS: {np.array(out_accs)}')
         logger.info(
-            f'[{oi+1}/{OUT_ITER}] OUTER LOSS: {outer_loss.item():.8f} '
+            f'[{ppr}] OUTER LOSS: {outer_loss.item():.8f} '
             f'(best: {bout_loss:.8f} ({bl_iter}/{OUT_ITER}))'
         )
         if outer_loss.item() < bout_loss:
@@ -238,8 +254,8 @@ def run_opt(
         # Add regularization and take opt step
         if OUTREG > 0.0:
             outer_loss += (OUTREG * wnorm(outer_var, OUTNORM))
-        logger.info(
-            f'[{oi+1}/{OUT_ITER}] OUTER LOSS + REG: {outer_loss:.8f} '
+        logger.debug(
+            f'[{ppr}] OUTER LOSS + REG: {outer_loss:.8f} '
             f'(best: {bout_obj:.8f} ({bo_iter}/{OUT_ITER}))'
         )
         if outer_loss.item() < bout_obj:
@@ -250,42 +266,38 @@ def run_opt(
         # save delta stats
         with torch.no_grad():
             out_delta = torch.linalg.norm(outer_var.weight - outer_old)
-        logger.info(f'[{oi+1}/{OUT_ITER}] OUT Delta: {out_delta.item():.6f}')
-        curr_lr = out_sched.get_last_lr()[0]
+        logger.info(f'[{ppr}] OUT Delta: {out_delta.item():.6f}')
+        # curr_lr = out_sched.get_last_lr()[0] # <== NOTE: StepLR
+        curr_lr = out_opt.param_groups[0]['lr'] # <== NOTE: ReduceLROnPlateau
         delta_stats += [(oi+1, 'ALL', out_delta.item(), curr_lr, np.nan)]
 
-        # invoke learning rate scheduler
-        if not (CONS_LR_DECAY and batch_stats):
-            out_sched.step()
-
         # Update simplex lambda if minmax
-        logger.info(f'[{oi+1}/{OUT_ITER}] Lambdas: {simplex_vars}')
+        logger.debug(f'[{ppr}] Lambdas: {simplex_vars}')
         if MINMAX:
             # negate gradient for gradient ascent
             simplex_vars.grad *= -1.
-            logger.debug(f'[{oi+1}/{OUT_ITER}] - Lambda grads: {simplex_vars.grad}')
+            logger.debug(f'[{ppr}] - Lambda grads: {simplex_vars.grad}')
             simplex_opt.step()
-            logger.info(f'[{oi+1}/{OUT_ITER}] - Updated Lambdas: {simplex_vars}')
+            logger.debug(f'[{ppr}] - Updated Lambdas: {simplex_vars}')
             simplex_proj_inplace(simplex_vars)
-            logger.info(f'[{oi+1}/{OUT_ITER}] - Simplex projected updated Lambdas: {simplex_vars}')
-            curr_lr = simplex_sched.get_last_lr()[0]
+            logger.info(f'[{ppr}] - Simplex projected updated Lambdas: {simplex_vars}')
+            # curr_lr = simplex_sched.get_last_lr()[0] # <== NOTE: StepLR
+            curr_lr = simplex_opt.param_groups[0]['lr'] # <== NOTE: ReduceLROnPlateau
             with torch.no_grad():
                 lambda_delta = torch.linalg.norm(simplex_vars - old_simplex_vars)
-            logger.info(f'[{oi+1}/{OUT_ITER}] - lambda delta: {lambda_delta.item():.6f}')
+            logger.info(f'[{ppr}] - lambda delta: {lambda_delta.item():.6f}')
             delta_stats += [(oi+1, 'SIMPLE', lambda_delta.item(), curr_lr, np.nan)]
             # update out_delta to include lambda delta
             out_delta += lambda_delta
-            # invoke learning rate scheduler
-            if not (CONS_LR_DECAY and batch_stats):
-                simplex_sched.step()
             assert simplex_vars.requires_grad
+
         in_delta_sum = np.sum(in_deltas)
         converged = (in_delta_sum < TOL) and (out_delta < TOL)
         if (not batch_stats) or (converged):
             # compute stats on full data
             voobjs, toobjs = [], []
-            for t, tdata, tw in zip(TASKS, TASK_DATA, inner_vars):
-                logger.info(f'[{oi+1}/{OUT_ITER}] Task {t} full-stats comp ....')
+            for t, tdata, tw, tsched in zip(TASKS, TASK_DATA, inner_vars, in_scheds):
+                logger.info(f'[{ppr}] Task {t} full-stats comp ....')
                 X, y = tdata['train']
                 vX, vy = tdata['val']
                 tX, ty = tdata['test']
@@ -313,33 +325,42 @@ def run_opt(
                     )]
                     voobjs += [val_obj]
                     toobjs += [test_obj]
-            logger.info(f'[{oi+1}/{OUT_ITER} Full outer stats:')
-            logger.info(f'[{oi+1}/{OUT_ITER} val: {np.array(voobjs)}')
-            logger.info(f'[{oi+1}/{OUT_ITER} test: {np.array(toobjs)}')
+            # invoking lr scheduler for inner level optimization
+            tsched.step(test_obj)
+            logger.info(f'[{ppr} Full outer stats:')
+            logger.info(f'[{ppr} val: {np.array(voobjs)}')
+            logger.info(f'[{ppr} test: {np.array(toobjs)}')
+            all_test_objs = np.sum(toobjs)
+            # invoking lr scheduler for outer level optimization
+            out_sched.step(all_test_objs)
+
             # compute opt & stats for unseen tasks
             for tt, ttdata in zip(TTASKS, TTASK_DATA):
-                logger.info(f'[{oi+1}/{OUT_ITER}] Unseen task {tt} full-stats comp ....')
+                logger.info(f'[{ppr}] Unseen task {tt} full-stats comp ....')
                 max_ntrain = ttdata['train-size']
+                BSIZE = 8
                 # loop over different training set sizes
-                for ntrain in [32, 128]:
-                    if ntrain <= BATCH_SIZE or ntrain > max_ntrain:
+                for ntrain in [32, 64, 128, 256]:
+                    if ntrain <= BSIZE or ntrain > max_ntrain:
                         continue
                     # INNER LEVEL TEST TASKS
                     iv = nn.Linear(INT_DIM, NCLASSES)
+                    iv.weight = invar_init.weight
                     tin_opt = torch.optim.SGD(
                         iv.parameters(),
                         lr=LRATE,
-                        # momentum=0.9,
-                        # weight_decay=1e-4,
+                        momentum=0.9,
+                        weight_decay=1e-4,
                     )
-                    tin_sched = torch.optim.lr_scheduler.StepLR(
-                        tin_opt, step_size=30, gamma=LR_DECAY, verbose=False
-                    )
+                    # NOTE: Avoid LR scheduling for unseen tasks; NEED to keep number of epochs small
+                    # tin_sched = torch.optim.lr_scheduler.StepLR(
+                    #     tin_opt, step_size=30, gamma=LR_DECAY, verbose=False
+                    # )
                     X, y = ttdata['train']
                     tidxs = np.arange(max_ntrain)
                     RNG.shuffle(tidxs)
                     X1, y1 = X[tidxs[:ntrain]], y[tidxs[:ntrain]]
-                    logger.info(f"- Training unseen task {tt} with data of size {X1.shape}")
+                    logger.debug(f"- Training unseen task {tt} with data of size {X1.shape}")
                     with torch.no_grad():
                         rX1 = out_nlin(outer_var(X1)) if NLIN else outer_var(X1)
                     # Optimize inner var for unseen new task for fixed outer var
@@ -347,39 +368,37 @@ def run_opt(
                     for eidx in range(TOBJ_MAX_EPOCHS):
                         start_idx = 0
                         logger.debug(
-                            f'[{oi+1}/{OUT_ITER}] [UNSEEN {tt}] ({eidx+1}/{TOBJ_MAX_EPOCHS}) Train size: {ntrain}'
+                            f'[{ppr}] [UNSEEN {tt}] ({eidx+1}/{TOBJ_MAX_EPOCHS}) Train size: {ntrain}'
                         )
                         old_iv = iv.weight.clone()
                         epoch_loss = 0.0
                         steps_in_epoch = 0
                         while start_idx < ntrain:
                             tin_opt.zero_grad()
-                            bidxs = np.arange(start_idx, min(start_idx + BATCH_SIZE, ntrain))
-                            logger.debug(f'     Batch: {bidxs}')
+                            bidxs = np.arange(start_idx, min(start_idx + BSIZE, ntrain))
                             bX = rX1[bidxs]
                             by = y1[bidxs]
-                            logger.debug(f'     {bX.shape}')
                             probs = in_softmax(iv(bX))
                             btloss = loss(probs, by)
                             if INREG > 0.0:
                                 btloss += (INREG * wnorm(iv, INNORM))
                             btloss.backward(retain_graph=True)
                             tin_opt.step()
-                            start_idx += BATCH_SIZE
+                            start_idx += BSIZE
                             epoch_loss += btloss.item()
                             steps_in_epoch += 1
                         epoch_loss /= steps_in_epoch
-                        tin_sched.step()
+                        # tin_sched.step()
                         in_delta = torch.linalg.norm(iv.weight - old_iv)
                         if in_delta < TOL:
                             logger.info(
-                                f'[{oi+1}/{OUT_ITER}] [UNSEEN {tt}] ({eidx+1}/{TOBJ_MAX_EPOCHS})'
+                                f'[{ppr}] [UNSEEN {tt}] ({eidx+1}/{TOBJ_MAX_EPOCHS})'
                                 f'Train size: {ntrain} '
                                 f'exiting opt with delta: {in_delta:.8f}'
                             )
                             break
                     logger.info(
-                        f'[{oi+1}/{OUT_ITER}] [UNSEEN {tt}] Train size: {ntrain} '
+                        f'[{ppr}] [UNSEEN {tt}] Train size: {ntrain} '
                         f' Concluded with epoch loss: {epoch_loss:.6f}'
                     )
                     # evaluate full train/test loss/obj
@@ -407,17 +426,17 @@ def run_opt(
 
         if converged:
             logger.warning(
-                f"[{oi+1}/{OUT_ITER}] Exiting optimization with sum(IN-DELTAs): {in_delta_sum:.8f}, "
+                f"[{ppr}] Exiting optimization with sum(IN-DELTAs): {in_delta_sum:.8f}, "
                 f"OUT-DELTA: {out_delta:.8f}"
             )
             break
-
+    logger.info(
+        f'Best loss: {bout_loss:.5f} ({bl_iter}/{OUT_ITER}), Best obj: {bout_obj:.5f} ({bo_iter}/{OUT_ITER})'
+    )
     all_stats_df = pd.DataFrame(all_stats, columns=all_stats_col)
     delta_stats_df = pd.DataFrame(delta_stats, columns=delta_stats_col)
     tall_stats_df = pd.DataFrame(tall_stats, columns=tall_stats_col)
-
     return all_stats_df, delta_stats_df, tall_stats_df
-
 
 
 if __name__ == '__main__':
@@ -458,7 +477,7 @@ if __name__ == '__main__':
     parser.add_argument('--tolerance', '-x', type=float, default=1e-7, help='Tolerance of optimization')
     parser.add_argument('--tobj_max_epochs', '-E', type=int, default=100, help='Max epochs for test tasks')
     parser.add_argument('--output_dir', '-U', type=str, default='', help='Directory to save results in')
-    parser.add_argument('--cons_lr_decay', '-C', action='store_true', help='Decay LR more conservatively')
+    # parser.add_argument('--cons_lr_decay', '-C', action='store_true', help='Decay LR more conservatively')
 
     ostrings = [
         s.replace('-', '')
@@ -497,7 +516,7 @@ if __name__ == '__main__':
     assert args.inner_batch_size > 1 and args.outer_batch_size > 1
     assert args.full_stats_per_iter > 1
     assert args.tolerance > 0.
-    assert args.tobj_max_epochs > 1
+    assert 1 <= args.tobj_max_epochs <= 10
 
     RNG = np.random.RandomState(args.random_seed)
     torch.manual_seed(args.random_seed)
@@ -514,10 +533,45 @@ if __name__ == '__main__':
         for i in range(len(all_labels)) for j in range(i + 1, len(all_labels))
     ]
     logger.info(f'Total of {len(all_tasks)} binary classification tasks')
-    tidxs = np.arange(len(all_tasks))
-    RNG.shuffle(tidxs)
-    tasks = [all_tasks[tidxs[i]] for i in range(args.nobjs)]
-    ttasks = [all_tasks[tidxs[i]] for i in range(args.nobjs, args.nobjs+args.ntobjs)]
+    # RANDOM CONFIG
+    # tidxs = np.arange(len(all_tasks))
+    # RNG.shuffle(tidxs)
+    # tasks = [all_tasks[tidxs[i]] for i in range(args.nobjs)]
+    # ttasks = [all_tasks[tidxs[i]] for i in range(args.nobjs, args.nobjs+args.ntobjs)]
+    #####
+    # Config #1: UNREG LINEAR MODEL
+    # d:FashionMNIST_F:5_L:0.01_B:32_I:32_P:2_R:0.0_D:64_y:0.8_O:1000_
+    # N:False_l:0.01_b:128_p:2_r:0.0_S:54833779_x:1e-07
+    #####
+    # Config #2: REG LINEAR MODEL
+    # d:FashionMNIST_F:5_L:0.01_B:32_I:32_P:2_R:0.005_D:64_y:0.8_O:1000_
+    # N:False_l:0.01_b:128_p:2_r:0.0005_S:54833779_x:1e-07
+    #####
+    # Config #3: UNREG NONLINEAR MODEL
+    # d:FashionMNIST_F:5_L:0.01_B:32_I:32_P:2_R:0.0_D:64_y:0.8_O:1000_
+    # N:True_l:0.01_b:128_p:2_r:0.0_S:54833779_x:1e-07
+    #####
+    tasks = [
+        (4, 7), # EASY
+        (4, 9), # EASY
+        (2, 7), # EASY
+        (2, 9), # EASY
+        (3, 9), # EASY
+        (1, 7), # EASY
+        (3, 7), # EASY
+        (0, 9), # EASY
+        (2, 4), # HARD
+        (0, 6), # HARD
+    ]
+    ttasks = [
+        (2, 5), # EASY
+        (5, 6), # EASY
+        (4, 5), # EASY
+        (1, 9), # EASY
+        (3, 6), # HARD
+        (4, 6), # HARD
+        (2, 6), # HARD
+    ]
     NCLASSES = 2
     logger.info(f"Performing {'minmax' if args.minmax else 'average'} optimization with the following tasks:")
     logger.info(f"- Tasks: {tasks}")
@@ -558,7 +612,6 @@ if __name__ == '__main__':
         FULL_STATS_PER_ITER=args.full_stats_per_iter,
         TOL=args.tolerance,
         TOBJ_MAX_EPOCHS=args.tobj_max_epochs,
-        CONS_LR_DECAY=args.cons_lr_decay,
     )
 
     print('All stats: ', astats.shape)
