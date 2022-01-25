@@ -330,7 +330,7 @@ def run_opt(
             with torch.no_grad():
                 all_test_objs = torch.sum(
                     simplex_vars * torch.Tensor(toobjs)
-                ).item() if MINMAX else np.sum(toobjs)
+                ).item()
             logger.info(f'[{ppr} Full outer stats:')
             logger.info(f'[{ppr} val: {np.array(voobjs)}')
             logger.info(f'[{ppr} test: {np.array(toobjs)} (sum: {all_test_objs:.4f})')
