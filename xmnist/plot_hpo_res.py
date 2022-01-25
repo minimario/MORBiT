@@ -1,3 +1,5 @@
+import numpy as np
+np.set_printoptions(precision=4)
 from itertools import product
 import sys
 import os
@@ -6,7 +8,6 @@ import warnings
 warnings.simplefilter('ignore')
 
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
@@ -21,7 +22,7 @@ logger.setLevel(logging.INFO)
 
 DPI=100
 LW=1.0
-ALPHA=0.2
+ALPHA=0.5
 WIDTH=3
 HEIGHT=8
 MS=2
@@ -44,6 +45,7 @@ def plot_test_error(df, color, ax, ylab, label_suffix=''):
             **{'alpha': ALPHA}, label='_nolegend_'
         )
     task_mean_ys = np.mean(np.array(per_task_ys), axis=0)
+    per_task_bests = np.min(np.array(per_task_ys), axis=1)
     task_max_ys = np.max(np.array(per_task_ys), axis=0)
     assert len(task_max_ys) == len(per_task_ys[0]), f'Task max shape: {task_max_ys.shape}'
     assert len(task_mean_ys) == len(per_task_ys[0]), f'Task mean shape: {task_mean_ys.shape}'
@@ -52,6 +54,7 @@ def plot_test_error(df, color, ax, ylab, label_suffix=''):
     )
     ax.plot(xvals, task_mean_ys, c=color, ls='--', linewidth=LW, label=f'U-MEAN-f-te{label_suffix}')
     ax.plot(xvals, task_max_ys, c=color, ls='-', linewidth=LW, label=f'U-MAX-f-te{label_suffix}')
+    logger.info(f'Unseen {label_suffix}:\n{per_task_bests}')
 
 
 opt_file = 'opt_stats_seen_tasks.csv'
@@ -61,7 +64,10 @@ uns_file = 'objs_unseen_tasks.csv'
 PATH = './svm-hpo-res'
 configs = sorted([c.path for c in os.scandir(PATH) if c.is_dir()])
 logger.info(f'Found {len(configs)} configs in {PATH}')
-filter_list = []
+filter_list = [
+    'T:7',
+    'D:100_',
+]
 if len(filter_list) > 0:
     configs = [
         c for c in configs
@@ -105,6 +111,7 @@ for c in tqdm(configs):
         if sidx < len(cparams):
             title += '\n'
     logger.debug(f'Plot title:\n{title}')
+    logger.info(f"Config: {c.replace('_', ' ')}")
 
     # handle stats for seen tasks
     df = pd.read_csv(os.path.join(c, opt_file))
@@ -125,6 +132,7 @@ for c in tqdm(configs):
                     **{'alpha': ALPHA}, label='_nolegend_'
                 )
             task_mean_ys = np.mean(np.array(per_task_ys), axis=0)
+            per_task_bests = np.min(np.array(per_task_ys), axis=1)
             task_max_ys = np.max(np.array(per_task_ys), axis=0)
             assert len(task_max_ys) == len(per_task_ys[0]), f'Task max shape: {task_max_ys.shape}'
             assert len(task_mean_ys) == len(per_task_ys[0]), f'Task mean shape: {task_mean_ys.shape}'
@@ -133,6 +141,7 @@ for c in tqdm(configs):
             )
             ax.plot(xvals, task_mean_ys, c=colors[m], ls='--', linewidth=LW, label='S-MEAN-' + m)
             ax.plot(xvals, task_max_ys, c=colors[m], ls='-', linewidth=LW, label='S-MAX-' + m)
+            logger.info(f'SEEN-{m}\n{per_task_bests}')
     # handle stats for unseen tasks
     df = pd.read_csv(os.path.join(c, uns_file))
     logger.debug(f'Read in {uns_file} of size {df.shape}')
@@ -146,8 +155,8 @@ for c in tqdm(configs):
     else:
         plot_test_error(df, 'g', ax, 'f-obj')
     ax.grid(axis='both')
-    if cidx == 0 and ridx == 1:
-        ax.legend(loc='upper left', ncol=2, bbox_to_anchor=(0, -0.1), fontsize=TITLEFONT)
+    if cidx == 0 and ridx == 0:
+        ax.legend(loc='lower left', ncol=4, bbox_to_anchor=(0, 1.07), fontsize=TITLEFONT)
     ax.set_title((r'$\bf{MINMAX}$' if minmax else r'$\bf{AVG}$') + 'OBJ')
     ax.text(250, 0.4, title, fontsize=TITLEFONT)
     cidxs[ridx] += 1
