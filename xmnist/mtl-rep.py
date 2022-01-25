@@ -579,8 +579,28 @@ if __name__ == '__main__':
     logger.info(f"- Tasks: {ttasks}")
     task_data = [get_task_data(full_data, t, val=True) for t in tasks]
     ttask_data = [get_task_data(full_data, tt, val=False) for tt in ttasks]
+    # normalize the data for better scaling for RFF
+    for td in task_data + ttask_data:
+        X, _ = td['train']
+        max_X = torch.max(X).item()
+        X /= max_X
+        tX, _ = td['test']
+        tX /= max_X
+        if 'val' in td:
+            vX, _ = td['val']
+            vX /= max_X
     orig_dim = task_data[0]['train'][0].shape[1]
     logger.info(f"Starting with original input dim: {orig_dim} ...")
+    for t, td in zip(tasks + ttasks, task_data + ttask_data):
+        X, _ = td['train']
+        max_X = torch.max(X).item()
+        tX, _ = td['test']
+        max_tX = torch.max(tX).item()
+        logger.info(f'Task {t} -- max X: {max_X:.4f}, max tX: {max_tX:.4f}')
+        if 'val' in td:
+            vX, _ = td['val']
+            max_vX = torch.max(vX).item()
+            logger.info(f'Task {t} -- max vX: {max_vX:.4f}')
 
     output_dir = os.path.join(args.output_dir, expt_tag)
     if args.output_dir != '':
