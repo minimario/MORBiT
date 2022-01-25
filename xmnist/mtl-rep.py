@@ -34,6 +34,7 @@ def run_opt(
         LRATE_OUT=0.0001,
         LRATE_SIMP=0.1,
         LR_DECAY=0.8,
+        LR_PATIENCE=20,
         IN_ITER=1,
         OUT_ITER=1000,
         NLIN=False,
@@ -62,7 +63,7 @@ def run_opt(
     # )
     out_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
         out_opt, 'min', factor=LR_DECAY, verbose=True,
-        patience=20,
+        patience=LR_PATIENCE,
     )
 
 
@@ -88,7 +89,7 @@ def run_opt(
         # )
         in_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
             in_opt, 'min', factor=LR_DECAY, verbose=True,
-            patience=20,
+            patience=LR_PATIENCE,
         )
         in_opts += [in_opt]
         in_scheds += [in_sched]
@@ -110,7 +111,7 @@ def run_opt(
         # )
         simplex_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
             simplex_opt, 'min', factor=LR_DECAY, verbose=True,
-            patience=20,
+            patience=LR_PATIENCE,
         )
 
     # Functions used by all tasks and level -- not optimized
@@ -466,6 +467,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--lr_decay', '-y', type=float, default=0.5, help='Factor to reduce learning rate by'
     )
+    parser.add_argument(
+        '--lr_patience', '-z', type=int, default=20, help='Patience for LR scheduler'
+    )
     parser.add_argument('--inner_loop', '-I', type=int, default=1, help='Number of inner level iterations')
     parser.add_argument('--max_outer_loop', '-O', type=int, default=100, help='Max outer level iters')
     parser.add_argument('--inner_reg', '-R', type=float, default=0.001, help='Reg. for inner level')
@@ -516,6 +520,7 @@ if __name__ == '__main__':
     assert args.out_lrate > 0.
     assert args.simplex_lrate > 0.
     assert 0. < args.lr_decay < 1.
+    assert args.lr_patience > 0
     assert args.inner_loop > 1
     assert args.max_outer_loop > 1
     assert args.inner_p in [1, 2] and args.outer_p in [1, 2]
@@ -627,6 +632,7 @@ if __name__ == '__main__':
         LRATE_OUT=args.out_lrate,
         LRATE_SIMP=args.simplex_lrate,
         LR_DECAY=args.lr_decay,
+        LR_PATIENCE=args.lr_patience,
         IN_ITER=args.inner_loop,
         OUT_ITER=args.max_outer_loop,
         NLIN=args.nonlinear,
