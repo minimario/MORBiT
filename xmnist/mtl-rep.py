@@ -46,10 +46,19 @@ def run_opt(
         FULL_STATS_PER_ITER=10,
         TOL=1e-7,
         TOBJ_MAX_EPOCHS=1000,
+        MAX_TRAIN_SIZE=100000,
 ):
 
     loss = nn.CrossEntropyLoss()
 
+
+    # per-task shuffled train idxs
+    shuffled_train_idxs = [
+        np.arange(td['train-size']) for td in TASK_DATA
+    ]
+    for sti in shuffled_train_idxs:
+        RNG.shuffle(sti)
+    
     # OUTER LEVEL VARS
     outer_var = nn.Linear(IN_DIM, INT_DIM, bias=False)
     out_opt = torch.optim.SGD(
@@ -177,11 +186,11 @@ def run_opt(
         outer_loss = 0.0
         outer_old = outer_var.weight.clone()
         # Looping over all the tasks
-        for t, tdata, tw, topt, tsch, tlambda in zip(
-                TASKS, TASK_DATA, inner_vars, in_opts, in_scheds, simplex_vars
+        for t, tdata, tw, topt, tsch, tlambda, sti in zip(
+                TASKS, TASK_DATA, inner_vars, in_opts, in_scheds, simplex_vars, shuffled_train_idxs
         ):
             logger.debug(f'[{ppr}] Task {t} ....')
-            tsize = tdata['train-size']
+            tsize = min(tdata['train-size'], MAX_TRAIN_SIZE)
             X, y = tdata['train']
             total_loss = 0.
             total_obj = 0.
@@ -189,7 +198,7 @@ def run_opt(
             for ii in range(IN_ITER):
                 topt.zero_grad()
                 logger.debug(f'[{ppr}] [{t}] ({ii+1}/{IN_ITER}) Train size: {tsize}')
-                bidxs = [RNG.randint(0, tsize) for _ in range(BATCH_SIZE)]
+                bidxs = [sti[RNG.randint(0, tsize)] for _ in range(BATCH_SIZE)]
                 bX = X[bidxs]
                 by = y[bidxs]
                 int_rep = out_nlin(outer_var(bX)) if NLIN else outer_var(bX)
@@ -487,6 +496,7 @@ if __name__ == '__main__':
     parser.add_argument('--tolerance', '-x', type=float, default=1e-7, help='Tolerance of optimization')
     parser.add_argument('--tobj_max_epochs', '-E', type=int, default=100, help='Max epochs for test tasks')
     parser.add_argument('--output_dir', '-U', type=str, default='', help='Directory to save results in')
+    parser.add_argument('--max_train_size', '-X', type=int, default=1000000, help='Max. train set size per task')
     # parser.add_argument('--cons_lr_decay', '-C', action='store_true', help='Decay LR more conservatively')
 
     ostrings = [
@@ -528,6 +538,8 @@ if __name__ == '__main__':
     assert args.full_stats_per_iter > 1
     assert args.tolerance > 0.
     assert 1 <= args.tobj_max_epochs <= 10
+    assert args.max_train_size > 10
+    assert args.max_train_size >= args.inner_batch_size
 
     RNG = np.random.RandomState(args.random_seed)
     torch.manual_seed(args.random_seed)
@@ -644,6 +656,7 @@ if __name__ == '__main__':
         FULL_STATS_PER_ITER=args.full_stats_per_iter,
         TOL=args.tolerance,
         TOBJ_MAX_EPOCHS=args.tobj_max_epochs,
+        MAX_TRAIN_SIZE=args.max_train_size,
     )
 
     print('All stats: ', astats.shape)
