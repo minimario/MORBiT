@@ -84,7 +84,7 @@ colors = {
     'f-va-obj': 'r',
     'f-te-obj': 'b',
 }
-colors1 = ['g', 'y', 'k']
+colors1 = ['g', 'y', 'k', 'c']
 
 METRICS = list(colors.keys())
 
@@ -149,7 +149,7 @@ for c in tqdm(configs):
     if cidx == 0 and ridx == 1:
         ax.legend(loc='upper left', ncol=2, bbox_to_anchor=(0, -0.1), fontsize=TITLEFONT)
     ax.set_title((r'$\bf{MINMAX}$' if minmax else r'$\bf{AVG}$') + 'OBJ')
-    ax.text(250, 0.6, title, fontsize=TITLEFONT)
+    ax.text(250, 0.4, title, fontsize=TITLEFONT)
     cidxs[ridx] += 1
     # break
 axs[0, 0].set_ylabel('Outer objective')

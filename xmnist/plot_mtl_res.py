@@ -63,7 +63,9 @@ PATH = './mtl-res'
 configs = sorted([c.path for c in os.scandir(PATH) if c.is_dir()])
 logger.info(f'Found {len(configs)} configs in {PATH}')
 filter_list = [
-    'T:10',
+    'T:7',
+    't:10',
+#   'N:False',
 ]
 if len(filter_list) > 0:
     configs = [
@@ -86,7 +88,7 @@ colors = {
     'f-va-obj': 'r',
     'f-te-obj': 'b',
 }
-colors1 = ['g', 'y', 'k']
+colors1 = ['g', 'y', 'k', 'c']
 
 METRICS = list(colors.keys())
 
