@@ -108,7 +108,7 @@ def run_opt(
         # simplex_sched = torch.optim.lr_scheduler.StepLR(
         #     simplex_opt, step_size=30, gamma=LR_DECAY, verbose=False
         # )
-        simples_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        simplex_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
             simplex_opt, 'min', factor=LR_DECAY, verbose=True,
             patience=20,
         )
@@ -327,12 +327,17 @@ def run_opt(
                     toobjs += [test_obj]
             # invoking lr scheduler for inner level optimization
             tsched.step(test_obj)
+            with torch.no_grad():
+                all_test_objs = torch.sum(
+                    simplex_vars * torch.Tensor(toobjs)
+                ).item() if MINMAX else np.sum(toobjs)
             logger.info(f'[{ppr} Full outer stats:')
-            logger.info(f'[{ppr} val: {np.array(voobjs)}')
+            logger.info(f'[{ppr} val: {np.array(voobjs)} (sum: {all_test_objs:.4f})')
             logger.info(f'[{ppr} test: {np.array(toobjs)}')
-            all_test_objs = np.sum(toobjs)
             # invoking lr scheduler for outer level optimization
             out_sched.step(all_test_objs)
+            if MINMAX:
+                simplex_sched.step(all_test_objs)
 
             # compute opt & stats for unseen tasks
             for tt, ttdata in zip(TTASKS, TTASK_DATA):
