@@ -247,7 +247,7 @@ def run_opt(
             f'(best: {bout_loss:.8f} ({bl_iter}/{OUT_ITER}))'
         )
         if outer_loss.item() < bout_loss:
-            logger.info(f'OUT: {np.array(out_losses)}')
+            logger.debug(f'OUT: {np.array(out_losses)}')
             bout_loss = outer_loss.item()
             bl_iter = oi + 1
 
@@ -325,15 +325,15 @@ def run_opt(
                     )]
                     voobjs += [val_obj]
                     toobjs += [test_obj]
-            # invoking lr scheduler for inner level optimization
-            tsched.step(test_obj)
+                # invoking lr scheduler for inner level optimization
+                tsched.step(test_obj)
             with torch.no_grad():
                 all_test_objs = torch.sum(
                     simplex_vars * torch.Tensor(toobjs)
                 ).item() if MINMAX else np.sum(toobjs)
             logger.info(f'[{ppr} Full outer stats:')
-            logger.info(f'[{ppr} val: {np.array(voobjs)} (sum: {all_test_objs:.4f})')
-            logger.info(f'[{ppr} test: {np.array(toobjs)}')
+            logger.info(f'[{ppr} val: {np.array(voobjs)}')
+            logger.info(f'[{ppr} test: {np.array(toobjs)} (sum: {all_test_objs:.4f})')
             # invoking lr scheduler for outer level optimization
             out_sched.step(all_test_objs)
             if MINMAX:
