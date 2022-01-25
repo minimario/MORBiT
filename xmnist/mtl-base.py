@@ -238,11 +238,13 @@ def run_base_opt(
                 )]
                 voobjs += [val_obj]
                 toobjs += [test_obj]
+            # invoking lr scheduler for inner level optimization
             tsched.step(test_obj)
             logger.info(f'[{ppr}] Full outer stats:')
             logger.info(f'[{ppr}] val: {np.array(voobjs)}')
             logger.info(f'[{ppr}] test: {np.array(toobjs)}')
             all_test_objs = np.sum(toobjs)
+            # invoking lr scheduler for outer level optimization
             out_sched.step(all_test_objs)
         if converged:
             logger.warning(
