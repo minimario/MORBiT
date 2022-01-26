@@ -61,6 +61,7 @@ def run_hpo(
         FULL_STATS_PER_ITER=10,
         TOL=1e-7,
         TOBJ_MAX_EPOCHS=10,
+        PRECOMPUTE_RPS=False,
 ):
 
     # OUTER LEVEL VARS
@@ -138,10 +139,34 @@ def run_hpo(
 
     # PER-TASK RFF PROJECTION MATRIX
     PROJS = []
-    for t in tasks:
+    for t, td in zip(TASKS, TASK_DATA):
         W = (1/ np.sqrt(IN_DIM)) * torch.normal(0., 1., size=(IN_DIM, INT_DIM))
         W.requires_grad = False
-        PROJS += [W]
+        if PRECOMPUTE_RPS:
+            logger.info(f'Precomputing random projections for task {t} ...')
+            X, y = td['train']
+            td['train'] = (torch.matmul(X, W), y)
+            vX, vy = td['val']
+            td['val'] = (torch.matmul(vX, W), vy)
+            tX, ty = td['test']
+            td['test'] = (torch.matmul(tX, W), ty)
+            PROJS += [None]
+        else:
+            PROJS += [W]
+    TPROJS = []
+    for tt, ttd in zip(TTASKS, TTASK_DATA):
+        W = (1/ np.sqrt(IN_DIM)) * torch.normal(0., 1., size=(IN_DIM, INT_DIM))
+        W.requires_grad = False
+        if PRECOMPUTE_RPS:
+            logger.info(f'Precomputing random projections for test task {tt} ...')
+            X, y = ttd['train']
+            ttd['train'] = (torch.matmul(X, W), y)
+            tX, ty = ttd['test']
+            ttd['test'] = (torch.matmul(tX, W), ty)
+            TPROJS += [None]
+        else:
+            TPROJS += [W]
+
     # for D in TDIMS:
     #     W = (1/ np.sqrt(IN_DIM)) * torch.normal(0., 1., size=(IN_DIM, D))
     #     W.requires_grad = False
@@ -205,8 +230,9 @@ def run_hpo(
         outer_old = [logC.item(), logG.item()]
         # Looping over all the tasks
         for t, tdata, tw, topt, tsch, tlambda, proj in zip(
-                tasks, task_data, inner_vars, in_opts, in_scheds, simplex_vars, PROJS,
+                TASKS, TASK_DATA, inner_vars, in_opts, in_scheds, simplex_vars, PROJS,
         ):
+            assert PRECOMPUTE_RPS or proj is not None
             logger.debug(f'[{ppr}] Task {t} ....')
             tsize = tdata['train-size']
             X, y = tdata['train']
@@ -219,7 +245,11 @@ def run_hpo(
                 bidxs = [np.random.randint(0, tsize) for _ in range(BATCH_SIZE)]
                 bX = X[bidxs]
                 by = y[bidxs]
-                probs = in_softmax(tw(RFF2(logG, proj, factor, bX)))
+                probs = in_softmax(tw(
+                    factor * torch.cos(torch.exp(logG) * bX)
+                )) if PRECOMPUTE_RPS else in_softmax(tw(
+                    RFF2(logG, proj, factor, bX)
+                ))
                 btloss = loss(probs, by)
                 # tracking loss
                 total_loss += btloss.item()
@@ -238,7 +268,11 @@ def run_hpo(
             bidxs = [RNG.randint(0, vsize) for _ in range(BATCH_SIZE_OUT)]
             bX = vX[bidxs]
             by = vy[bidxs]
-            probs = in_softmax(tw(RFF2(logG, proj, factor, bX)))
+            probs = in_softmax(tw(
+                factor * torch.cos(torch.exp(logG) * bX)
+            )) if PRECOMPUTE_RPS else in_softmax(tw(
+                RFF2(logG, proj, factor, bX)
+            ))
             toloss = loss(probs, by)
             toobj = toloss.item()
             # Computing outer level accuracy on batch
@@ -322,18 +356,31 @@ def run_hpo(
             # compute stats on full data
             voobjs, toobjs = [], []
             for t, tdata, tw, proj, tsched in zip(TASKS, TASK_DATA, inner_vars, PROJS, in_scheds):
+                assert PRECOMPUTE_RPS or proj is not None
                 logger.info(f'[{ppr}] Task {t} full-stats comp ....')
                 X, y = tdata['train']
                 vX, vy = tdata['val']
                 tX, ty = tdata['test']
                 with torch.no_grad():
-                    train_out = in_softmax(tw(RFF2(logG, proj, factor, X)))
+                    train_out = in_softmax(tw(
+                        factor * torch.cos(torch.exp(logG) * X)
+                    )) if PRECOMPUTE_RPS else in_softmax(tw(
+                        RFF2(logG, proj, factor, X)
+                    ))
                     train_loss = loss(train_out, y)
                     train_obj = train_loss.item()
                     train_obj += (INREG * 0.5 * wnorm(tw, INNORM)).item()
-                    val_out = in_softmax(tw(RFF2(logG, proj, factor, vX)))
+                    val_out = in_softmax(tw(
+                        factor * torch.cos(torch.exp(logG) * vX)
+                    )) if PRECOMPUTE_RPS else in_softmax(tw(
+                        RFF2(logG, proj, factor, vX)
+                    ))
                     val_loss = loss(val_out, vy)
-                    test_out = in_softmax(tw(RFF2(logG, proj, factor, tX)))
+                    test_out = in_softmax(tw(
+                        factor * torch.cos(torch.exp(logG) * tX)
+                    )) if PRECOMPUTE_RPS else in_softmax(tw(
+                        RFF2(logG, proj, factor, tX)
+                    ))
                     test_loss = loss(test_out, ty)
                     all_stats += [(
                         oi+1, False, t,
@@ -349,16 +396,17 @@ def run_hpo(
                 all_test_objs = torch.sum(
                     simplex_vars * torch.Tensor(toobjs)
                 ).item()
-            logger.info(f'[{ppr} Full outer stats:')
-            logger.info(f'[{ppr} val: {np.array(voobjs)}')
-            logger.info(f'[{ppr} test: {np.array(toobjs)} (sum: {all_test_objs:.4f})')
+            logger.info(f'[{ppr}] Full outer stats:')
+            logger.info(f'[{ppr}] val: {np.array(voobjs)}')
+            logger.info(f'[{ppr}] test: {np.array(toobjs)} (sum: {all_test_objs:.4f})')
             # invoking lr scheduler for outer level optimization
             out_sched.step(all_test_objs)
             if MINMAX:
                 simplex_sched.step(all_test_objs)
 
             # compute opt & stats for unseen tasks
-            for tt, ttdata in zip(TTASKS, TTASK_DATA):
+            for tt, ttdata, tproj in zip(TTASKS, TTASK_DATA, TPROJS):
+                assert PRECOMPUTE_RPS or tproj is not None
                 logger.info(f'[{ppr}] Unseen task {tt} full-stats comp ....')
                 ntrain = ttdata['train-size']
                 BSIZE = 8
@@ -374,8 +422,6 @@ def run_hpo(
                 # tin_sched = torch.optim.lr_scheduler.StepLR(
                 #     tin_opt, step_size=30, gamma=LR_DECAY, verbose=False
                 # )
-                W = (1/ np.sqrt(IN_DIM)) * torch.normal(0., 1., size=(IN_DIM, INT_DIM))
-                W.requires_grad = False
                 X, y = ttdata['train']
                 logger.debug(f"- Training unseen task {tt} with data of size {X.shape}")
                 # Optimize inner var for unseen new task for fixed outer var
@@ -396,7 +442,11 @@ def run_hpo(
                         bX = X[bidxs]
                         by = y[bidxs]
                         with torch.no_grad():
-                            rffX = RFF2(logG, W, factor, bX)
+                            rffX = factor * torch.cos(
+                                torch.exp(logG) * bX
+                            ) if PRECOMPUTE_RPS else RFF2(
+                                logG, tproj, factor, bX
+                            )
                         probs = in_softmax(iv(rffX))
                         btloss = loss(probs, by)
                         btloss += (INREG * 0.5 * wnorm(iv, INNORM))
@@ -431,7 +481,11 @@ def run_hpo(
                         bidxs = np.arange(start_idx, min(start_idx + BATCH_SIZE_OUT, ntrain))
                         bX = X[bidxs]
                         by = y[bidxs]
-                        out = in_softmax(iv(RFF2(logG, W, factor, bX)))
+                        out = in_softmax(tw(
+                            factor * torch.cos(torch.exp(logG) * bX)
+                        )) if PRECOMPUTE_RPS else in_softmax(iv(
+                            RFF2(logG, W, factor, bX)
+                        ))
                         train_loss += loss(out, by)
                         steps_in_epoch += 1
                         start_idx += BATCH_SIZE_OUT
@@ -446,7 +500,11 @@ def run_hpo(
                         bidxs = np.arange(start_idx, min(start_idx + BATCH_SIZE_OUT, ntest))
                         bX = tX[bidxs]
                         by = ty[bidxs]
-                        out = in_softmax(iv(RFF2(logG, W, factor, bX)))
+                        out = in_softmax(tw(
+                            factor * torch.cos(torch.exp(logG) * bX)
+                        )) if PRECOMPUTE_RPS else in_softmax(iv(
+                            RFF2(logG, W, factor, bX)
+                        ))
                         test_loss += loss(out, by)
                         steps_in_epoch += 1
                         start_idx += BATCH_SIZE_OUT
@@ -512,6 +570,10 @@ if __name__ == '__main__':
     parser.add_argument('--tolerance', '-x', type=float, default=1e-7, help='Tolerance of optimization')
     parser.add_argument('--tobj_max_epochs', '-E', type=int, default=100, help='Max epochs for test tasks')
     parser.add_argument('--output_dir', '-U', type=str, default='', help='Directory to save results in')
+    parser.add_argument(
+        '--precompute_random_projections', '-R', action='store_true',
+        help='Whether to precompute the random projections for the RFF'
+    )
 
     args = parser.parse_args()
     expt_tag = args2tag(parser, args)
@@ -637,6 +699,7 @@ if __name__ == '__main__':
         FULL_STATS_PER_ITER=args.full_stats_per_iter,
         TOL=args.tolerance,
         TOBJ_MAX_EPOCHS=args.tobj_max_epochs,
+        PRECOMPUTE_RPS=args.precompute_random_projections,
     )
 
     print('All stats: ', astats.shape)
