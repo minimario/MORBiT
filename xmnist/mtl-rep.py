@@ -575,25 +575,25 @@ if __name__ == '__main__':
     # N:True_l:0.01_b:128_p:2_r:0.0_S:54833779_x:1e-07
     #####
     tasks = [
-        (4, 7), # EASY
-        (4, 9), # EASY
+        (0, 6), # HARD
+        (0, 9), # EASY
+        (1, 7), # EASY
+        (2, 4), # HARD
         (2, 7), # EASY
         (2, 9), # EASY
-        (3, 9), # EASY
-        (1, 7), # EASY
+        (4, 7), # EASY
+        (4, 9), # EASY
         (3, 7), # EASY
-        (0, 9), # EASY
-        (2, 4), # HARD
-        (0, 6), # HARD
+        (3, 9), # EASY
     ]
     ttasks = [
-        (2, 5), # EASY
-        (5, 6), # EASY
-        (4, 5), # EASY
         (1, 9), # EASY
-        (3, 6), # HARD
-        (4, 6), # HARD
+        (2, 5), # EASY
         (2, 6), # HARD
+        (3, 6), # HARD
+        (4, 5), # EASY
+        (4, 6), # HARD
+        (5, 6), # EASY
     ]
     NCLASSES = 2
     logger.info(f"Performing {'minmax' if args.minmax else 'average'} optimization with the following tasks:")
