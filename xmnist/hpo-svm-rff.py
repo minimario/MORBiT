@@ -622,25 +622,25 @@ if __name__ == '__main__':
     # Config #2: D = 1000
     # d:FashionMNIST_F:5_L:0.01_B:32_I:32_D:1000_y:0.8_O:1000_l:0.01_b:128_S:54833779_x:1e-07
     tasks = [
-        (2, 7), # EASY
+        (0, 9), # EASY
         (1, 7), # EASY
         (1, 9), # EASY
-        (4, 7), # EASY
-        (3, 9), # EASY
-        (0, 9), # EASY
-        (3, 7), # EASY
-        (4, 9), # EASY
         (2, 4), # HARD
         (2, 6), # HARD
+        (2, 7), # EASY
+        (3, 7), # EASY
+        (3, 9), # EASY
+        (4, 7), # EASY
+        (4, 9), # EASY
     ]
     ttasks = [
-        (6, 9), # EASY
-        (2, 9), # EASY
-        (1, 5), # EASY
-        (0, 7), # EASY
-        (6, 7), # EASY
         (0, 6), # HARD
+        (0, 7), # EASY
+        (1, 5), # EASY
+        (2, 9), # EASY
         (4, 6), # HARD
+        (6, 7), # EASY
+        (6, 9), # EASY
     ]
     NCLASSES = 2
     logger.info(f"Performing {'minmax' if args.minmax else 'average'} optimization with the following tasks:")
