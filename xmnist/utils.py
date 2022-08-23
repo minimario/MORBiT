@@ -114,7 +114,7 @@ def get_task_data(ddict, task, val, train_size=0):
         idxs = (v.targets == c1) | (v.targets == c2)
         task_X = torch.flatten(v.data[idxs], start_dim=1).float()
         task_y = v.targets[idxs]
-        if train_size > 0:
+        if train_size > 0 and k == 'train':
             from sklearn.model_selection import train_test_split
             X1, X2, y1, y2 = train_test_split(
                 task_X, task_y, test_size=train_size, stratify=task_y
