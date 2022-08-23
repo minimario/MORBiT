@@ -5,6 +5,7 @@ torch.set_printoptions(precision=4)
 from torchvision import transforms
 from torchvision.datasets import MNIST, FashionMNIST, CIFAR100
 from openml.datasets import get_dataset
+from sklearn.model_selection import train_test_split
 
 
 import sys
@@ -84,7 +85,6 @@ def get_data(dname, path_to_data, totensor=True):
         assert not any(C)
         assert len(np.unique(y)) == 26
         assert X.shape == (20000, 16)
-        from sklearn.model_selection import train_test_split
         X1, X2, y1, y2 = train_test_split(X, y, test_size=0.4, stratify=y)
         class Data:
             data: torch.Tensor
@@ -104,7 +104,7 @@ def get_data(dname, path_to_data, totensor=True):
 
 
 
-def get_task_data(ddict, task, val, train_size=0):
+def get_task_data(ddict, task, val, train_val_size=0):
     assert 'train' in ddict.keys() and 'test' in ddict.keys()
     assert len(task) == 2
     c1, c2 = task
@@ -114,13 +114,11 @@ def get_task_data(ddict, task, val, train_size=0):
         idxs = (v.targets == c1) | (v.targets == c2)
         task_X = torch.flatten(v.data[idxs], start_dim=1).float()
         task_y = v.targets[idxs]
-        if train_size > 0 and k == 'train':
-            from sklearn.model_selection import train_test_split
+        if train_val_size > 0 and k == 'train':
             X1, X2, y1, y2 = train_test_split(
-                task_X, task_y, test_size=train_size, stratify=task_y
+                task_X, task_y, train_size=train_val_size, stratify=task_y
             )
-            task_X = X2
-            task_y = y2
+            task_X, task_y = X1, y1
         c1_idxs = task_y == c1
         c2_idxs = task_y == c2
         task_y[c1_idxs] = 0
@@ -129,16 +127,15 @@ def get_task_data(ddict, task, val, train_size=0):
             in_dim = task_X.shape[1]
             tdict['dim'] = in_dim
         if k == 'test' and val:
-            n = task_X.shape[0]
-            sidxs = np.arange(n)
-            np.random.shuffle(sidxs)
-            tidxs = sidxs[:n//2]
-            vidxs = sidxs[n//2:]
-            task_vX, task_vy = task_X[vidxs], task_y[vidxs]
-            task_X, task_y = task_X[tidxs], task_y[tidxs]
-            logger.info(f'Set validation, size: {task_vX.shape}')
-            tdict['val'] = (task_vX, task_vy)
-            tdict['val-size'] = task_vX.shape[0]
+            ts = train_val_size if train_val_size > 0 else 0.5
+            print('val size:', train_val_size, ts)
+            X1, X2, y1, y2 = train_test_split(
+                task_X, task_y, test_size=ts, stratify=task_y
+            )
+            logger.info(f'Set validation, size: {X2.shape}')
+            tdict['val'] = (X2, y2)
+            tdict['val-size'] = X2.shape[0]
+            task_X, task_y = X1, y1
         logger.info(f'Set {k}, size: {task_X.shape}')
         tdict[f'{k}-size'] = task_X.shape[0]
         tdict[k] = (task_X, task_y)
@@ -186,9 +183,9 @@ if __name__ == '__main__':
             logger.info(f'  - {np.unique(v.targets.numpy())}')
         task = (4, 7)
         td = get_task_data(
-            ddict, task, True, train_size=0,
+            ddict, task, False
         ) if dname == 'MNIST' else get_task_data(
-            ddict, task, False, train_size=20
+            ddict, task, True, train_val_size=20
         )
         for k, v in td.items():
             if isinstance(v, tuple):
