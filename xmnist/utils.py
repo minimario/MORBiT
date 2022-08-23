@@ -104,7 +104,7 @@ def get_data(dname, path_to_data, totensor=True):
 
 
 
-def get_task_data(ddict, task, val):
+def get_task_data(ddict, task, val, train_size=0):
     assert 'train' in ddict.keys() and 'test' in ddict.keys()
     assert len(task) == 2
     c1, c2 = task
@@ -114,6 +114,13 @@ def get_task_data(ddict, task, val):
         idxs = (v.targets == c1) | (v.targets == c2)
         task_X = torch.flatten(v.data[idxs], start_dim=1).float()
         task_y = v.targets[idxs]
+        if train_size > 0:
+            from sklearn.model_selection import train_test_split
+            X1, X2, y1, y2 = train_test_split(
+                task_X, task_y, test_size=train_size, stratify=task_y
+            )
+            task_X = X2
+            task_y = y2
         c1_idxs = task_y == c1
         c2_idxs = task_y == c2
         task_y[c1_idxs] = 0
@@ -178,7 +185,11 @@ if __name__ == '__main__':
             logger.info(f'- Labels: {v.targets.shape}')
             logger.info(f'  - {np.unique(v.targets.numpy())}')
         task = (4, 7)
-        td = get_task_data(ddict, task, dname=='MNIST')
+        td = get_task_data(
+            ddict, task, True, train_size=0,
+        ) if dname == 'MNIST' else get_task_data(
+            ddict, task, False, train_size=20
+        )
         for k, v in td.items():
             if isinstance(v, tuple):
                 X, y = v
