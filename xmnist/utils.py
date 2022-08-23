@@ -3,7 +3,9 @@ np.set_printoptions(precision=4)
 import torch
 torch.set_printoptions(precision=4)
 from torchvision import transforms
-from torchvision.datasets import MNIST, FashionMNIST
+from torchvision.datasets import MNIST, FashionMNIST, CIFAR100
+from openml.datasets import get_dataset
+
 
 import sys
 import os
@@ -37,7 +39,7 @@ def args2tag(parser, args):
     logger.info(f'... experiment tag generated')
     return expt_tag
 
-def pull_data(dfunc, path_to_data):
+def pull_data(dfunc, path_to_data, totensor=True):
 
     ret = []
     for train in [True, False]:
@@ -49,7 +51,7 @@ def pull_data(dfunc, path_to_data):
                 root=path_to_data,
                 train=train,
                 download=False,
-                transform=transforms.ToTensor()
+                transform=(transforms.ToTensor() if totensor else None),
             )
         except Exception as e:
             logger.info(
@@ -60,20 +62,46 @@ def pull_data(dfunc, path_to_data):
                 root=path_to_data,
                 train=train,
                 download=True,
-                transform=transforms.ToTensor()
+                transform=transforms.ToTensor() if totensor else None,
             )
         ret += [d]
     assert len(ret) == 2
     return {'train': ret[0], 'test': ret[1]}
 
 
-def get_data(dname, path_to_data):
-    assert dname in ['MNIST', 'FashionMNIST']
+def get_data(dname, path_to_data, totensor=True):
+    assert dname in ['MNIST', 'FashionMNIST', 'CIFAR100', 'Letter']
     assert os.path.isdir(path_to_data)
     if dname == 'MNIST':
-        return pull_data(MNIST, path_to_data)
+        return pull_data(MNIST, path_to_data, totensor=totensor)
     elif dname == 'FashionMNIST':
-        return pull_data(FashionMNIST, path_to_data)
+        return pull_data(FashionMNIST, path_to_data, totensor=totensor)
+    elif dname == 'CIFAR100':
+        return pull_data(CIFAR100, path_to_data, totensor=totensor)
+    elif dname == 'Letter':
+        d = get_dataset(6)
+        X, y, C, N = d.get_data(target=d.default_target_attribute, dataset_format='array')
+        assert not any(C)
+        assert len(np.unique(y)) == 26
+        assert X.shape == (20000, 16)
+        from sklearn.model_selection import train_test_split
+        X1, X2, y1, y2 = train_test_split(X, y, test_size=0.4, stratify=y)
+        class Data:
+            data: torch.Tensor
+            targets: torch.Tensor
+        
+        TRAIN = Data()
+        TRAIN.data = torch.tensor(X1)
+        TRAIN.targets = torch.tensor(y1, dtype=torch.int)
+        TEST = Data()
+        TEST.data = torch.tensor(X2)
+        TEST.targets = torch.tensor(y2, dtype=torch.int)
+        return {
+            'train': TRAIN,
+            'test': TEST,
+        }
+        
+
 
 
 def get_task_data(ddict, task, val):
@@ -142,7 +170,7 @@ def wnorm(w, p: int):
 if __name__ == '__main__':
     logger.info(f'Running data fetching tools ...')
     dpath = '/home/pari/data/torchvision/'
-    for dname in ['MNIST', 'FashionMNIST']:
+    for dname in ['MNIST', 'Letter']:
         ddict = get_data(dname, dpath)
         for k, v in ddict.items():
             logger.info(f"Data: {dname}+{k}")
@@ -155,7 +183,10 @@ if __name__ == '__main__':
             if isinstance(v, tuple):
                 X, y = v
                 logger.info(f'Task: {task}, set: {k}, sizes: ({X.shape}, {y.shape})')
-                logger.info(f'Task: {task}, set: {k}, labels: {np.unique(y.numpy(), return_counts=True)}')
+                logger.info(
+                    f'Task: {task}, set: {k}, '
+                    f'labels: {np.unique(y.numpy(), return_counts=True)}'
+                )
                 continue
             logger.info(f'Task: {task}, {k}: {v}')
     logger.info(f'Evaluating simplex projection ...')
@@ -167,4 +198,16 @@ if __name__ == '__main__':
     ]:
         logger.info(f'In: {v}')
         simplex_proj_inplace(v, z=1)
+        assert np.isclose(v.sum().item(), 1.0)
+        logger.info(f'Out: {v}')
+    
+    for v in [
+            torch.Tensor([0.2, 0.4, 0.3]),
+            torch.Tensor([0.7, 0.4, 0.3]),
+            torch.Tensor([-0.1, 1.4, 0.5]),
+            torch.Tensor([0.2])
+    ]:
+        logger.info(f'In: {v}')
+        simplex_proj_inplace(v, z=0.8)
+        assert np.isclose(v.sum().item(), 0.8)
         logger.info(f'Out: {v}')
