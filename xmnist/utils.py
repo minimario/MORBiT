@@ -128,7 +128,6 @@ def get_task_data(ddict, task, val, train_val_size=0):
             tdict['dim'] = in_dim
         if k == 'test' and val:
             ts = train_val_size if train_val_size > 0 else 0.5
-            print('val size:', train_val_size, ts)
             X1, X2, y1, y2 = train_test_split(
                 task_X, task_y, test_size=ts, stratify=task_y
             )
