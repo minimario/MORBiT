@@ -92,10 +92,10 @@ def get_data(dname, path_to_data, totensor=True):
         
         TRAIN = Data()
         TRAIN.data = torch.tensor(X1)
-        TRAIN.targets = torch.tensor(y1, dtype=torch.int)
+        TRAIN.targets = torch.tensor(y1, dtype=torch.long)
         TEST = Data()
         TEST.data = torch.tensor(X2)
-        TEST.targets = torch.tensor(y2, dtype=torch.int)
+        TEST.targets = torch.tensor(y2, dtype=torch.long)
         return {
             'train': TRAIN,
             'test': TEST,

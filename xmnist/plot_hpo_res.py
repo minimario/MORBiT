@@ -12,23 +12,127 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 import pickle
+import argparse
+import os
+
 
 import logging
 logging.basicConfig(stream=sys.stdout)
-logger = logging.getLogger('PLOT-SVM-HPO-RES')
-logger.setLevel(logging.INFO)
+logger = logging.getLogger('PLOT-HPO-RES')
+logger.setLevel(logging.DEBUG)
 
 
 
 DPI=100
 LW=1.0
-ALPHA=0.5
+ALPHA=0.3
 WIDTH=3
 HEIGHT=8
 MS=2
 USEMAX = False
 TITLEFONT=7
 TITLEPARAMS=3
+
+
+opt_file = 'opt_stats_seen_tasks.csv'
+del_file = 'opt_deltas.cvs'
+uns_file = 'objs_unseen_tasks.csv'
+
+# PATH = './svm-hpo-res'
+# PATH = './svm-rep-hpo'
+# PATH = './hpo-v2'
+# PATH = './hpo-lin-hd'
+PATH = './hpo-lin-reg-hd'
+# PATH = './hpo-hd-klr'
+MINVAL, MAXVAL, STEP, STEP1 = 0.0, 2.0, 0.2, 0.04
+LOGX, LOGY = False, True
+XTEXT, YTEXT = 1000, 0.48
+filter_list = [
+    'd:FashionMNIST',
+    #'d:Letter',
+    #'T:4_',
+    #'D:100_',
+    #'I:4_',
+    #'z:100',
+    #'E:1_',
+    #'O:50000_',
+    #'z:20_',
+    #'N:100_',
+    #'X:1000',
+]
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--dpi', '-D', help='Image DPI', type=int, default=DPI)
+parser.add_argument('--lw', '-L', help='Line width', type=int, default=LW)
+parser.add_argument(
+    '--alpha', '-A', help='Task line transperancy', type=int, default=ALPHA
+)
+parser.add_argument('--width', '-W', help='Per-image width', type=int, default=WIDTH)
+parser.add_argument('--height', '-H', help='Per-image height', type=int, default=HEIGHT)
+parser.add_argument('--msize', '-M', help='Marker size', type=int, default=MS)
+parser.add_argument('--tfsize', '-f', help='Title font size', type=int, default=TITLEFONT)
+parser.add_argument(
+    '--tpwidth', '-w', help='Number of expt params per line', type=int, default=TITLEPARAMS
+)
+parser.add_argument(
+    '--path', '-P', help='Path to expt result directories', type=str, required=True
+)
+parser.add_argument(
+    '--minyval', '-y', help='Minimum y-axis value', type=float, default=MINVAL
+)
+parser.add_argument(
+    '--maxyval', '-Y', help='Maximum y-axis value', type=float, default=MAXVAL
+)
+parser.add_argument(
+    '--ymajor', '-s', help='y-axis major step size', type=float, default=STEP
+)
+parser.add_argument(
+    '--yminor', '-S', help='y-axis minor step size', type=float, default=STEP1
+)
+parser.add_argument('--xtext', '-t', help='x-val for text', default=XTEXT, type=float)
+parser.add_argument('--ytext', '-T', help='y-val for text', default=YTEXT, type=float)
+parser.add_argument('--xlog', help='Log scale for x-axis', action='store_true')
+parser.add_argument('--ylog', help='Log scale for y-axis', action='store_true')
+parser.add_argument(
+    '--filter_list', '-F', help='comma-separated list of filtering terms', type=str,
+    default=''
+    
+)
+
+args = parser.parse_args()
+
+PATH = args.path
+assert os.path.isdir(PATH)
+
+if args.filter_list != '':
+    filter_list = args.filter_list.split(',')
+    logger.info(f'Filtering files based on:\n{filter_list}')
+
+DPI=args.dpi
+LW=args.lw
+ALPHA=args.alpha
+WIDTH=args.width
+HEIGHT=args.height
+MS=args.msize
+USEMAX = False
+TITLEFONT=args.tfsize
+TITLEPARAMS=args.tpwidth
+
+
+opt_file = 'opt_stats_seen_tasks.csv'
+del_file = 'opt_deltas.cvs'
+uns_file = 'objs_unseen_tasks.csv'
+
+# PATH = './svm-hpo-res'
+# PATH = './svm-rep-hpo'
+# PATH = './hpo-v2'
+# PATH = './hpo-lin-hd'
+# PATH = './hpo-lin-reg-hd'
+# PATH = './hpo-hd-klr'
+MINVAL, MAXVAL, STEP, STEP1 = args.minyval, args.maxyval, args.ymajor, args.yminor
+LOGX, LOGY = args.xlog, args.ylog
+XTEXT, YTEXT = args.xtext, args.ytext
 
 
 def plot_test_error(df, color, ax, ylab, label_suffix=''):
@@ -52,22 +156,28 @@ def plot_test_error(df, color, ax, ylab, label_suffix=''):
     assert np.sum(np.std(np.array(per_task_xs), axis=0)) == 0.0, (
         f'task x STDs: {np.std(np.array(per_task_xs), axis=0)}'
     )
-    ax.plot(xvals, task_mean_ys, c=color, ls='--', linewidth=LW, label=f'U-MEAN-f-te{label_suffix}')
-    ax.plot(xvals, task_max_ys, c=color, ls='-', linewidth=LW, label=f'U-MAX-f-te{label_suffix}')
+    ax.plot(
+        xvals, task_mean_ys, c=color, ls='--',
+        linewidth=LW, label=f'U-MEAN-f-te{label_suffix}',
+        **{'alpha': ALPHA}
+    )
+    ax.plot(
+        xvals, task_max_ys, c=color, ls='-',
+        linewidth=LW, label=f'U-MAX-f-te{label_suffix}',
+        **{'alpha': ALPHA}
+    )
+    ax.text(
+        0.6 * xvals[-1], 1.1 * task_max_ys[-1],
+        f'te:{task_max_ys[-1]:.3f} ({np.min(task_max_ys):.3f})',
+        fontsize=TITLEFONT,
+        c=color,
+    )
     logger.info(f'Unseen {label_suffix}:\n{per_task_bests}')
 
-
-opt_file = 'opt_stats_seen_tasks.csv'
-del_file = 'opt_deltas.cvs'
-uns_file = 'objs_unseen_tasks.csv'
-
-PATH = './svm-hpo-res'
+major_yticks = np.arange(MINVAL, MAXVAL+STEP, step=STEP)
+minor_yticks = np.arange(MINVAL, MAXVAL+STEP1, step=STEP1)
 configs = sorted([c.path for c in os.scandir(PATH) if c.is_dir()])
 logger.info(f'Found {len(configs)} configs in {PATH}')
-filter_list = [
-    'T:7',
-    'D:100_',
-]
 if len(filter_list) > 0:
     configs = [
         c for c in configs
@@ -83,7 +193,7 @@ ncols = max(nminmax, navg, 2)
 nrows = 2
 fig, axs = plt.subplots(
     nrows, ncols, figsize=(WIDTH*ncols, HEIGHT), sharex=True, sharey=True,
-    squeeze=True,
+    #squeeze=True,
 )
 cidxs = [0, 0]
 colors = {
@@ -134,34 +244,65 @@ for c in tqdm(configs):
             task_mean_ys = np.mean(np.array(per_task_ys), axis=0)
             per_task_bests = np.min(np.array(per_task_ys), axis=1)
             task_max_ys = np.max(np.array(per_task_ys), axis=0)
-            assert len(task_max_ys) == len(per_task_ys[0]), f'Task max shape: {task_max_ys.shape}'
-            assert len(task_mean_ys) == len(per_task_ys[0]), f'Task mean shape: {task_mean_ys.shape}'
+            assert len(task_max_ys) == len(per_task_ys[0]), (
+                f'Task max shape: {task_max_ys.shape}'
+            )
+            assert len(task_mean_ys) == len(per_task_ys[0]), (
+                f'Task mean shape: {task_mean_ys.shape}'
+            )
             assert np.sum(np.std(np.array(per_task_xs), axis=0)) == 0.0, (
                 f'task x STDs: {np.std(np.array(per_task_xs), axis=0)}'
             )
-            ax.plot(xvals, task_mean_ys, c=colors[m], ls='--', linewidth=LW, label='S-MEAN-' + m)
-            ax.plot(xvals, task_max_ys, c=colors[m], ls='-', linewidth=LW, label='S-MAX-' + m)
+            ax.plot(
+                xvals, task_mean_ys, c=colors[m], ls='-', linewidth=LW,
+                label='S-MEAN-' + m,
+                **{'alpha': ALPHA}
+            )
+            ax.plot(
+                xvals, task_max_ys, c=colors[m], ls='-', linewidth=1.5*LW,
+                label='S-MAX-' + m,
+            )
+            if True: #'va-obj' in m:
+                ax.text(
+                    0.6 * xvals[-1], 1.1 * task_max_ys[-1],
+                    (
+                        f"{m.replace('f-', '').replace('-obj', '')}:{task_max_ys[-1]:.3f}"
+                        + f' ({np.min(task_max_ys):.3f})'
+                    ),
+                    fontsize=TITLEFONT,
+                    c=colors[m],
+                )
             logger.info(f'SEEN-{m}\n{per_task_bests}')
     # handle stats for unseen tasks
     df = pd.read_csv(os.path.join(c, uns_file))
     logger.debug(f'Read in {uns_file} of size {df.shape}')
     color_idx = 0
-    if 'ntrain' in list(df):
-        for ntrain, ndf in df.groupby(['ntrain']):
-            unseen_color = colors1[color_idx]
-            logger.debug(f'... train size: {ntrain} ')
-            plot_test_error(ndf, unseen_color, ax, 'f-obj', f'-{ntrain}')
-            color_idx += 1
-    else:
-        plot_test_error(df, 'g', ax, 'f-obj')
-    ax.grid(axis='both')
+    if len(df) > 0:
+        if 'ntrain' in list(df):
+            for ntrain, ndf in df.groupby(['ntrain']):
+                unseen_color = colors1[color_idx]
+                logger.debug(f'... train size: {ntrain} ')
+                plot_test_error(ndf, unseen_color, ax, 'f-obj', f'-{ntrain}')
+                color_idx += 1
+        else:
+            plot_test_error(df, 'g', ax, 'f-obj')
+    ## ax.set_yticks(major_yticks)
+    ## ax.set_yticks(minor_yticks, minor=True)
+    if LOGX:
+        ax.set_xscale('log')
+    if LOGY:
+        ax.set_yscale('log', base=2)
+    ax.grid(axis='both', which='major', alpha=0.2)
+    ax.grid(axis='y', which='minor', alpha=0.1)
     if cidx == 0 and ridx == 0:
         ax.legend(loc='lower left', ncol=4, bbox_to_anchor=(0, 1.07), fontsize=TITLEFONT)
-    ax.set_title((r'$\bf{MINMAX}$' if minmax else r'$\bf{AVG}$') + 'OBJ')
-    ax.text(250, 0.4, title, fontsize=TITLEFONT)
+    ax.set_title('MINMAX' if minmax else 'MINAVG')
+    ax.text(XTEXT, YTEXT, title, fontsize=TITLEFONT)
     cidxs[ridx] += 1
     # break
-axs[0, 0].set_ylabel('Outer objective')
-axs[1, -(ncols//2)].set_xlabel('Outer iterations')
+# axs[0, 0].set_ylabel('Outer objective')
+# axs[1, -(ncols//2)].set_xlabel('Outer iterations')
+# fig.supxlabel('# Outer iterations')
+# plt.tight_layout()
 prefix = os.path.join(PATH, 'all_results')
 fig.savefig(f'{prefix}_opt.png', dpi=DPI)
