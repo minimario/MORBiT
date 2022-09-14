@@ -43,7 +43,7 @@ def run_hpo(
         MINMAX=False,
         FULL_STATS_PER_ITER=10,
         TOL=1e-7,
-        TOBJ_MAX_EPOCHS=10,
+#         TOBJ_MAX_EPOCHS=10,
         DELTA=0.1,
         LOGC=True,
         INIT_C=0.0,
@@ -57,7 +57,6 @@ def run_hpo(
         [C],
         lr=LRATE_OUT,
         momentum=0.9,
-        weight_decay=1e-4,
     )
     out_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
         out_opt, 'min', factor=LR_DECAY, verbose=True,
@@ -73,7 +72,7 @@ def run_hpo(
             iv.parameters(),
             lr=LRATE,
             momentum=0.9,
-            weight_decay=1e-4,
+            # weight_decay=1e-4,
         )
         in_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
             in_opt, 'min', factor=LR_DECAY, verbose=True,
@@ -91,17 +90,33 @@ def run_hpo(
             [simplex_vars],
             lr=LRATE_SIMP,
             momentum=0.9,
-            weight_decay=1e-4,
         )
         simplex_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
             simplex_opt, 'min', factor=LR_DECAY, verbose=True,
             patience=LR_PATIENCE,
         )
 
+
+    # set up variables and optimizers for unseen tasks
+    nttasks = len(TTASKS)
+    t_inner_vars = [nn.Linear(IN_DIM, 1) for _ in TTASKS]
+    t_in_opts, t_in_scheds = [], []
+    for iv in t_inner_vars:
+        in_opt = torch.optim.SGD(
+            iv.parameters(),
+            lr=LRATE,
+            momentum=0.9,
+            # weight_decay=1e-4,
+        )
+        in_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            in_opt, 'min', factor=LR_DECAY, verbose=True,
+            patience=LR_PATIENCE,
+        )
+        t_in_opts += [in_opt]
+        t_in_scheds += [in_sched]
+
     # Functions used by all tasks and level -- not optimized
     loss = nn.MSELoss()
-
-
 
     # Setting up stats to be collected
 
@@ -120,10 +135,12 @@ def run_hpo(
     # statistics for change in variables during optimization for seen tasks
     delta_stats_col = [
         'oiter', # outer iter
-        'task', # task ID for inner_var or ALL for outer_var or SIMP for simplex_vars
+        # task ID for inner_var or ALL for outer_var or SIMP for simplex_vars
+        'task',
         'delta', # change in variables
         'lr', # current learning rate for variable
-        'lambda', # weight for current task; when outer_var or simplex_vars is NA
+        # weight for current task; when outer_var or simplex_vars is NA
+        'lambda',
     ]
     delta_stats = []
 
@@ -145,7 +162,10 @@ def run_hpo(
     for oi in range(OUT_ITER):
         logger.debug(f'Starting outer loop {oi+1}/{OUT_ITER} ...')
         ppr = f'{oi+1}/{OUT_ITER}'
-        batch_stats = ((oi+1) % FULL_STATS_PER_ITER != 0)
+        batch_stats = (
+            ((oi+1) % FULL_STATS_PER_ITER != 0)
+            or ((oi+1) == OUT_ITER)
+        )
         out_opt.zero_grad()
         if MINMAX:
             simplex_opt.zero_grad()
@@ -157,15 +177,15 @@ def run_hpo(
         outer_loss = 0.0
         outer_old = C.clone().detach()
         # Looping over all the tasks
-        for t, tdata, tw, topt, tsch, tlambda in zip(
-                TASKS, TASK_DATA, inner_vars, in_opts, in_scheds, simplex_vars,
+        for t, tdata, tw, topt, tlambda in zip(
+                TASKS, TASK_DATA, inner_vars, in_opts, simplex_vars,
         ):
             logger.debug(f'[{ppr}] Task {t} ....')
             tsize = tdata['train-size']
             X, y = tdata['train']
             total_loss = 0.
             total_obj = 0.
-            inner_old = tw.weight.clone()
+            inner_old = tw.weight.clone().detach()
             for ii in range(IN_ITER):
                 topt.zero_grad()
                 logger.debug(f'[{ppr}] [{t}] ({ii+1}/{IN_ITER}) Train size: {tsize}'),
@@ -173,7 +193,7 @@ def run_hpo(
                 bX = X[bidxs]
                 by = y[bidxs]
                 preds = tw(bX)
-                btloss = loss(preds, by)
+                btloss = loss(by, preds)
                 # tracking loss
                 total_loss += btloss.item()
                 btloss += reg(C, tw.weight, logspace=LOGC)
@@ -192,7 +212,7 @@ def run_hpo(
             bX = vX[bidxs]
             by = vy[bidxs]
             preds = tw(bX)
-            toloss = loss(preds, by)
+            toloss = loss(by, preds)
             toobj = toloss.item()
             # collect opt stats
             all_stats += [(
@@ -204,12 +224,13 @@ def run_hpo(
             outer_loss += (tlambda * toloss)
             out_losses += [toloss.item()]
             # collect delta stats
-            # current_lr = tsch.get_last_lr()[0] # <=== NOTE: StepLR
-            current_lr = topt.param_groups[0]['lr'] # <== NOTE: ReduceLROnPlateau
+            current_lr = topt.param_groups[0]['lr']
             with torch.no_grad():
                 in_delta = torch.linalg.norm(tw.weight - inner_old)
             in_deltas += [in_delta.item()]
-            delta_stats += [(oi+1, t, in_delta.item(), current_lr, tlambda.item())]
+            delta_stats += [
+                (oi+1, t, in_delta.item(), current_lr, tlambda.item())
+            ]
         # print some stats
         if not batch_stats:
             logger.debug(f'[{ppr}] IN LOSSES: {np.array(in_losses)}')
@@ -230,7 +251,8 @@ def run_hpo(
             if not batch_stats:
                 logger.info(
                     f'[{ppr}] {term}: '
-                    f'({torch.min(C):.2f}, {torch.mean(C):.2f}, {torch.max(C):.2f})'
+                    f'({torch.min(C):.2f},{torch.mean(C):.2f},'
+                    f'{torch.max(C):.2f})'
                     f';  g-{term}: ('
                     f'{torch.min(C.grad):.3f}, '
                     f'{torch.mean(C.grad):.3f}, '
@@ -243,8 +265,7 @@ def run_hpo(
         # save delta stats
         with torch.no_grad():
             out_delta = torch.linalg.norm(C - outer_old)
-        # curr_lr = out_sched.get_last_lr()[0] # <== NOTE: StepLR
-        curr_lr = out_opt.param_groups[0]['lr'] # <== NOTE: ReduceLROnPlateau
+        curr_lr = out_opt.param_groups[0]['lr']
         delta_stats += [(oi+1, 'ALL', out_delta.item(), curr_lr, np.nan)]
         if not batch_stats:
             logger.info(
@@ -263,7 +284,7 @@ def run_hpo(
             )
             simplex_opt.step()
             logger.debug(f'[{ppr}] U-Lambda: {simplex_vars}')
-            simplex_proj_inplace(simplex_vars, z = 1-DELTA)
+            simplex_proj_inplace(simplex_vars, z=1-DELTA)
             with torch.no_grad():
                 simplex_vars += (DELTA/ntasks)
             if not batch_stats:
@@ -271,16 +292,19 @@ def run_hpo(
                     f'[{ppr}] Sim-proj. U-Lambdas: '
                     f'{simplex_vars.clone().detach().numpy()}'
                 )
-            # curr_lr = simplex_sched.get_last_lr()[0] # <== NOTE: StepLR
-            curr_lr = simplex_opt.param_groups[0]['lr'] # <== NOTE: ReduceLROnPlateau
+            curr_lr = simplex_opt.param_groups[0]['lr']
             with torch.no_grad():
-                lambda_delta = torch.linalg.norm(simplex_vars - old_simplex_vars)
+                lambda_delta = torch.linalg.norm(
+                    simplex_vars - old_simplex_vars
+                )
             if not batch_stats:
                 logger.info(
                     f'[{ppr}] - lambda delta: {lambda_delta.item():.6f}, '
                     f'current LR: {curr_lr:.6f}'
                 )
-            delta_stats += [(oi+1, 'SIMP', lambda_delta.item(), curr_lr, np.nan)]
+            delta_stats += [
+                (oi+1, 'SIMP', lambda_delta.item(), curr_lr, np.nan)
+            ]
             # update out_delta to include lambda delta
             out_delta += lambda_delta.item()
             assert simplex_vars.requires_grad
@@ -290,20 +314,24 @@ def run_hpo(
         if (not batch_stats) or (converged):
             # compute stats on full data
             voobjs, toobjs = [], []
-            for t, tdata, tw, tsched in zip(TASKS, TASK_DATA, inner_vars, in_scheds):
+            for t, tdata, tw, tsched in zip(
+                    TASKS, TASK_DATA, inner_vars, in_scheds
+            ):
                 logger.info(f'[{ppr}] Task {t} full-stats comp ....')
                 X, y = tdata['train']
                 vX, vy = tdata['val']
                 tX, ty = tdata['test']
                 with torch.no_grad():
                     train_out = tw(X)
-                    train_loss = loss(train_out, y)
-                    train_obj = train_loss.item()
-                    train_obj += reg(C, tw.weight, logspace=LOGC).item()
+                    train_loss = loss(y, train_out)
+                    train_obj = (
+                        train_loss.item()
+                        + reg(C, tw.weight, logspace=LOGC).item()
+                    )
                     val_out = tw(vX)
-                    val_loss = loss(val_out, vy)
+                    val_loss = loss(vy, val_out)
                     test_out = tw(tX)
-                    test_loss = loss(test_out, ty)
+                    test_loss = loss(ty, test_out)
                     all_stats += [(
                         oi+1, False, t,
                         train_loss.item(), train_obj, # g-stuff
@@ -320,7 +348,9 @@ def run_hpo(
                 ).item()
             logger.info(f'[{ppr}] Full outer stats:')
             logger.info(f'[{ppr}] val: {np.array(voobjs)}')
-            logger.info(f'[{ppr}] test: {np.array(toobjs)} (w-sum: {all_test_objs:.4f})')
+            logger.info(
+                f'[{ppr}] test: {np.array(toobjs)} (w-sum: {all_test_objs:.4f})'
+            )
             outer_objs = [
                 np.mean(np.array(voobjs)),
                 np.max(np.array(voobjs)),
@@ -341,59 +371,53 @@ def run_hpo(
                 simplex_sched.step(all_test_objs)
 
             # compute opt & stats for unseen tasks
-            for tt, ttdata in zip(TTASKS, TTASK_DATA):
+            dC = C.clone().detach()
+            for tt, ttdata, ttw, ttin_opt, ttin_sched in zip(
+                    TTASKS, TTASK_DATA, t_inner_vars, t_in_opts, t_in_scheds
+            ):
                 logger.info(f'[{ppr}] Unseen task {tt} full-stats comp ....')
                 ntrain = ttdata['train-size']
-                BSIZE = 8
-                # INNER LEVEL TEST TASKS
-                iv = nn.Linear(IN_DIM, 1)
-                tin_opt = torch.optim.SGD(
-                    iv.parameters(),
-                    lr=LRATE,
-                    momentum=0.9,
-                    weight_decay=1e-4,
-                )
-                # NOTE: Avoid LR scheduling for unseen tasks;
-                #       NEED to keep number of epochs small
-                # tin_sched = torch.optim.lr_scheduler.StepLR(
-                #     tin_opt, step_size=30, gamma=LR_DECAY, verbose=False
-                # )
+                BSIZE = BATCH_SIZE
                 X, y = ttdata['train']
                 logger.debug(f"- Training unseen task {tt} with data of size {X.shape}")
                 # Optimize inner var for unseen new task for fixed outer var
                 epoch_loss = 0.0
-                for eidx in range(TOBJ_MAX_EPOCHS):
+                total_in_steps_left = FULL_STATS_PER_ITER * IN_ITER
+                while total_in_steps_left > 0:
                     tidxs = np.arange(ntrain)
                     RNG.shuffle(tidxs)
                     logger.debug(
-                        f'[{ppr}] [UNSEEN {tt}] ({eidx+1}/{TOBJ_MAX_EPOCHS}) '
+                        f'[{ppr}] [UNSEEN {tt}] '
                         f'Train size: {ntrain}'
+                        f' ({total_in_steps_left} steps left)'
                     )
-                    old_iv = iv.weight.clone()
+                    old_ttw = ttw.weight.clone().detach()
                     start_idx = 0
                     epoch_loss = 0.0
                     steps_in_epoch = 0
                     while start_idx < ntrain:
-                        tin_opt.zero_grad()
+                        ttin_opt.zero_grad()
                         bidxs = tidxs[start_idx: min(start_idx + BSIZE, ntrain)]
                         bX = X[bidxs]
                         by = y[bidxs]
-                        preds = iv(bX)
-                        btloss = loss(preds, by)
-                        btloss += reg(C, iv.weight, logspace=LOGC)
+                        preds = ttw(bX)
+                        btloss = loss(by, preds)
+                        btloss += reg(dC, ttw.weight, logspace=LOGC)
                         btloss.backward(retain_graph=True)
-                        tin_opt.step()
+                        ttin_opt.step()
                         start_idx += BSIZE
                         epoch_loss += btloss.item()
                         steps_in_epoch += 1
+                        total_in_steps_left -= 1
+                        if total_in_steps_left == 0:
+                            break
                     epoch_loss /= steps_in_epoch
-                    # tin_sched.step()
-                    in_delta = torch.linalg.norm(iv.weight - old_iv).item()
+                    t_in_delta = torch.linalg.norm(ttw.weight - old_ttw).item()
                     if in_delta < TOL:
                         logger.info(
-                            f'[{ppr}] [UNSEEN {tt}] ({eidx+1}/{TOBJ_MAX_EPOCHS})'
+                            f'[{ppr}] [UNSEEN {tt}] '
                             f'Train size: {ntrain} '
-                            f'exiting opt with delta: {in_delta:.8f}'
+                            f'exiting opt with delta: {t_in_delta:.8f}'
                         )
                         break
                 logger.info(
@@ -405,41 +429,16 @@ def run_hpo(
                 ntest = ttdata['test-size']
                 with torch.no_grad():
                     # computing full loss + obj on train set
-                    start_idx = 0
-                    steps_in_epoch = 0
-                    train_loss = 0.0
-                    while start_idx < ntrain:
-                        bidxs = np.arange(
-                            start_idx, min(start_idx + BATCH_SIZE_OUT, ntrain)
-                        )
-                        bX = X[bidxs]
-                        by = y[bidxs]
-                        out = tw(bX)
-                        train_loss += loss(out, by)
-                        steps_in_epoch += 1
-                        start_idx += BATCH_SIZE_OUT
-                    train_loss /= steps_in_epoch
-                    train_obj = train_loss.item()
-                    train_obj += reg(C, iv.weight, logspace=LOGC)
+                    preds = ttw(X)
+                    train_loss = loss(y, preds).item()
+                    train_obj = train_loss + reg(dC, ttw.weight, logspace=LOGC).item()
                     # computing full obj on test set
-                    start_idx = 0
-                    steps_in_epoch = 0
-                    test_loss = 0.0
-                    while start_idx < ntest:
-                        bidxs = np.arange(
-                            start_idx, min(start_idx + BATCH_SIZE_OUT, ntest)
-                        )
-                        bX = tX[bidxs]
-                        by = ty[bidxs]
-                        out = tw(bX)
-                        test_loss += loss(out, by)
-                        steps_in_epoch += 1
-                        start_idx += BATCH_SIZE_OUT
-                    test_loss /= steps_in_epoch
+                    preds = ttw(tX)
+                    test_loss = loss(ty, preds).item()
                     tall_stats += [(
                         oi+1, tt,
-                        train_loss.item(), train_obj, # g-stuff
-                        test_loss.item(), # f-te-stuff
+                        train_loss, train_obj, # g-stuff
+                        test_loss, # f-te-stuff
                     )]
 
         if converged:
@@ -451,13 +450,16 @@ def run_hpo(
     logger.info(
         f'Best obj: {bout_obj:.5f} ({bo_iter}/{OUT_ITER})'
     )
+    for i, s in zip([0, 1], ['mean', 'max']):
+        logger.info(
+            f' - Best {s} obj: {bout_full_obj[i]:.8f} '
+            f'({bfo_iter[i]}/{OUT_ITER}))'
+        )
     all_stats_df = pd.DataFrame(all_stats, columns=all_stats_col)
     delta_stats_df = pd.DataFrame(delta_stats, columns=delta_stats_col)
     tall_stats_df = pd.DataFrame(tall_stats, columns=tall_stats_col)
 
     return all_stats_df, delta_stats_df, tall_stats_df
-
-
 
 
 if __name__ == '__main__':
@@ -470,10 +472,16 @@ if __name__ == '__main__':
         default='/home/pari/data/torchvision/',
         help='Path to load data'
     )
+    parser.add_argument(
+        '--nobjs', '-a', type=int, default=10, help='Number of objectives for optimization'
+    )
+    parser.add_argument(
+        '--ntobjs', '-A', type=int, default=0, help='Number of unseen objectives'
+    )
     parser.add_argument('--nnz_ratio', '-n', type=float, default=0.4, help='NNZ ratio')
     parser.add_argument(
         '--ex_nnz_ratio', '-e', type=float, default=0.05, help='Extra NNZ ratio'
-    )    
+    )
     parser.add_argument(
         '--n_hard_tasks', '-T', type=int, default=2, help='Number of hard tasks'
     )
@@ -526,10 +534,10 @@ if __name__ == '__main__':
         '--tolerance', '-x', type=float, default=1e-7,
         help='Tolerance of optimization'
     )
-    parser.add_argument(
-        '--tobj_max_epochs', '-E', type=int, default=100,
-        help='Max epochs for test tasks'
-    )
+    ## parser.add_argument(
+    ##     '--tobj_max_epochs', '-E', type=int, default=100,
+    ##     help='Max epochs for unseen tasks'
+    ## )
     parser.add_argument(
         '--output_dir', '-U', type=str, default='',
         help='Directory to save results in'
@@ -563,8 +571,8 @@ if __name__ == '__main__':
 
     assert os.path.isdir(args.path_to_data)
     assert os.path.isdir(args.output_dir) or args.output_dir == ''
-    ## assert args.nobjs > 1
-    ## assert args.ntobjs >= 0
+    assert args.nobjs > 1
+    assert args.ntobjs >= 0
     assert args.in_lrate > 0.
     assert args.out_lrate > 0.
     assert args.simplex_lrate > 0.
@@ -575,10 +583,10 @@ if __name__ == '__main__':
     assert args.inner_batch_size > 1 and args.outer_batch_size > 1
     assert args.full_stats_per_iter > 1
     assert args.tolerance > 0.
-    assert 1 <= args.tobj_max_epochs <= 10
+    # assert 1 <= args.tobj_max_epochs <= 10
     assert args.n_hard_tasks >= 0
     assert args.nnz_ratio > 0.0
-    assert args.ex_nnz_ratio > 0.0
+    assert args.ex_nnz_ratio > 0.0 or args.n_hard_tasks == 0
     assert 0.3 > args.delta >=0.0
     assert args.logspace or args.init_c >= 0.
     assert args.noise_std_scale >= 0.0
@@ -591,6 +599,9 @@ if __name__ == '__main__':
 
     full_data = get_data(args.data, args.path_to_data)
     input_dim = full_data['train'].data.shape
+    max_X = torch.max(full_data['train'].data).item()
+    max_X1 = torch.max(full_data['test'].data).item()
+    logger.info(f'Training set max: {max_X:.2f}, test set max: {max_X1}')
     all_labels = np.unique(full_data['train'].targets.numpy())
     logger.info(f"Full data with {input_dim} features and {len(all_labels)} classes")
     logger.info(f"- Classes: {all_labels}")
@@ -600,38 +611,14 @@ if __name__ == '__main__':
     ]
     logger.info(f'Total of {len(all_tasks)} binary classification tasks')
     # RANDOM CONFIG
-    # tidxs = np.arange(len(all_tasks))
-    # RNG.shuffle(tidxs)
-    # tasks = [all_tasks[tidxs[i]] for i in range(args.nobjs)]
-    # ttasks = [all_tasks[tidxs[i]] for i in range(args.nobjs, args.nobjs+args.ntobjs)]
-    # Config #1: D = 100
-    # d:FashionMNIST_F:5_L:0.01_B:32_I:32_D:100_y:0.8_O:1000_l:0.01_b:128_S:54833779_x:1e-07
-    # Config #2: D = 1000
-    # d:FashionMNIST_F:5_L:0.01_B:32_I:32_D:1000_y:0.8_O:1000_l:0.01_b:128_S:54833779_x:1e-07
-    tasks = [
-        (0, 9), # EASY
-        (1, 7), # EASY
-        (1, 9), # EASY
-        (2, 7), # EASY
-        (3, 7), # EASY
-        (3, 9), # EASY
-        (4, 7), # EASY
-        (4, 9), # EASY
-        (2, 4), # HARD
-        (2, 6), # HARD
-    ]
-    ttasks = [
-        (0, 7), # EASY
-        (1, 5), # EASY
-        (2, 9), # EASY
-        (6, 7), # EASY
-        (6, 9), # EASY
-        (4, 6), # HARD
-        (0, 6), # HARD
-    ]
+    tidxs = np.arange(len(all_tasks))
+    RNG.shuffle(tidxs)
+    tasks = [all_tasks[tidxs[i]] for i in range(args.nobjs)]
+    ttasks = [all_tasks[tidxs[i]] for i in range(args.nobjs, args.nobjs+args.ntobjs)]
     logger.info(
         f"Performing {'minmax' if args.minmax else 'average'} optimization"
-        f" with the following tasks:")
+        f" with the following tasks:"
+    )
     logger.info(f"- Tasks: {tasks}")
     logger.info(f"To be evaluated with the following tasks:")
     logger.info(f"- Tasks: {ttasks}")
@@ -641,10 +628,9 @@ if __name__ == '__main__':
     ttask_data = [get_task_data(
         full_data, tt, val=False, train_val_size=args.train_val_size
     ) for tt in ttasks]
-    # scale the data for better scaling for RFF
+    # scale the data for better scaling
     for td in task_data + ttask_data:
         X, _ = td['train']
-        max_X = torch.max(X).item()
         X /= max_X
         tX, _ = td['test']
         tX /= max_X
@@ -656,14 +642,14 @@ if __name__ == '__main__':
 
     for t, td in zip(tasks + ttasks, task_data + ttask_data):
         X, _ = td['train']
-        max_X = torch.max(X).item()
+        max_trX = torch.max(X).item()
         tX, _ = td['test']
-        max_tX = torch.max(tX).item()
-        logger.info(f'Task {t} -- max X: {max_X:.4f}, max tX: {max_tX:.4f}')
+        max_teX = torch.max(tX).item()
+        logger.info(f'Task {t} -- max X: {max_trX:.4f}, max tX: {max_teX:.4f}')
         if 'val' in td:
             vX, _ = td['val']
-            max_vX = torch.max(vX).item()
-            logger.info(f'Task {t} -- max vX: {max_vX:.4f}')
+            max_vaX = torch.max(vX).item()
+            logger.info(f'Task {t} -- max vX: {max_vaX:.4f}')
     output_dir = os.path.join(args.output_dir, expt_tag)
     if args.output_dir != '':
         assert not os.path.exists(output_dir)
@@ -705,32 +691,32 @@ if __name__ == '__main__':
                 for ii, vv in zip(ennz_idxs[i - (nt - args.n_hard_tasks)], v):
                     w[ii] = vv
             tw += [w]
-    
+
     for t, tw, td in zip(
             tasks + ttasks,
             task_weights + ttask_weights,
             task_data + ttask_data
     ):
         wtensor = torch.Tensor(tw)
+        wtensor /= torch.linalg.norm(wtensor)
         logger.info(f'Weight tensor shape: {wtensor.shape}')
         for s in ['train', 'test', 'val']:
             if s in td:
                 X, y = td[s]
                 logger.info(f'Task: {t}, set: {s}, data: {X.shape}, {y.shape}')
-                logger.info(f'--> y-stats: {y.shape}, {y.min()}, {y.max()}')
                 yreg = torch.matmul(X, wtensor).view(-1, 1)
                 logger.info(
                     f'--> y-reg-stats: '
                     f' {yreg.shape}, {yreg.min():.3f}, {yreg.mean():.3f}, {yreg.max():.3f}'
                 )
-                if args.noise_std_scale > 0.0 and s == 'train':
+                if args.noise_std_scale > 0.0:
                     # std = args.noise_std_scale * yreg.mean().item()
                     std = args.noise_std_scale
                     noise = torch.normal(0, std, size=yreg.shape)
                     logger.info(f'Adding noise (std: {std:.5f}) of size: {noise.shape}')
                     yreg += noise
                 td[s] = (X, yreg)
-
+                
     astats, dstats, tastats = run_hpo(
         TASKS=tasks,
         TASK_DATA=task_data,
@@ -750,7 +736,7 @@ if __name__ == '__main__':
         MINMAX=args.minmax,
         FULL_STATS_PER_ITER=args.full_stats_per_iter,
         TOL=args.tolerance,
-        TOBJ_MAX_EPOCHS=args.tobj_max_epochs,
+        # TOBJ_MAX_EPOCHS=args.tobj_max_epochs,
         DELTA=args.delta,
         LOGC=args.logspace,
         INIT_C=args.init_c,
