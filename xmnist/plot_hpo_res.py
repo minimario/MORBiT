@@ -146,7 +146,7 @@ def plot_test_error(df, color, ax, ylab, label_suffix=''):
         per_task_xs += [xvals]
         ax.plot(
             xvals, yvals, c=color, ls=':', linewidth=LW,
-            **{'alpha': ALPHA}, label='_nolegend_'
+            **{'alpha': ALPHA/4}, label='_nolegend_'
         )
     task_mean_ys = np.mean(np.array(per_task_ys), axis=0)
     per_task_bests = np.min(np.array(per_task_ys), axis=1)
@@ -157,14 +157,13 @@ def plot_test_error(df, color, ax, ylab, label_suffix=''):
         f'task x STDs: {np.std(np.array(per_task_xs), axis=0)}'
     )
     ax.plot(
-        xvals, task_mean_ys, c=color, ls='--',
+        xvals, task_mean_ys, c=color, ls='-',
         linewidth=LW, label=f'U-MEAN-f-te{label_suffix}',
         **{'alpha': ALPHA}
     )
     ax.plot(
         xvals, task_max_ys, c=color, ls='-',
-        linewidth=LW, label=f'U-MAX-f-te{label_suffix}',
-        **{'alpha': ALPHA}
+        linewidth=1.5*LW, label=f'U-MAX-f-te{label_suffix}',
     )
     ax.text(
         0.6 * xvals[-1], 1.1 * task_max_ys[-1],
@@ -239,7 +238,7 @@ for c in tqdm(configs):
                 per_task_xs += [xvals]
                 ax.plot(
                     xvals, yvals, c=colors[m], ls=':', linewidth=LW,
-                    **{'alpha': ALPHA}, label='_nolegend_'
+                    **{'alpha': ALPHA/4}, label='_nolegend_'
                 )
             task_mean_ys = np.mean(np.array(per_task_ys), axis=0)
             per_task_bests = np.min(np.array(per_task_ys), axis=1)
