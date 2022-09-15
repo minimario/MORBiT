@@ -43,7 +43,6 @@ def run_hpo(
         MINMAX=False,
         FULL_STATS_PER_ITER=10,
         TOL=1e-7,
-#         TOBJ_MAX_EPOCHS=10,
         DELTA=0.1,
         LOGC=True,
         INIT_C=0.0,
@@ -72,7 +71,6 @@ def run_hpo(
             iv.parameters(),
             lr=LRATE,
             momentum=0.9,
-            # weight_decay=1e-4,
         )
         in_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
             in_opt, 'min', factor=LR_DECAY, verbose=True,
@@ -106,7 +104,6 @@ def run_hpo(
             iv.parameters(),
             lr=LRATE,
             momentum=0.9,
-            # weight_decay=1e-4,
         )
         in_sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
             in_opt, 'min', factor=LR_DECAY, verbose=True,
@@ -435,6 +432,7 @@ def run_hpo(
                     # computing full obj on test set
                     preds = ttw(tX)
                     test_loss = loss(ty, preds).item()
+                    ttin_sched.step(test_loss)
                     tall_stats += [(
                         oi+1, tt,
                         train_loss, train_obj, # g-stuff
@@ -534,10 +532,6 @@ if __name__ == '__main__':
         '--tolerance', '-x', type=float, default=1e-7,
         help='Tolerance of optimization'
     )
-    ## parser.add_argument(
-    ##     '--tobj_max_epochs', '-E', type=int, default=100,
-    ##     help='Max epochs for unseen tasks'
-    ## )
     parser.add_argument(
         '--output_dir', '-U', type=str, default='',
         help='Directory to save results in'
@@ -583,7 +577,6 @@ if __name__ == '__main__':
     assert args.inner_batch_size > 1 and args.outer_batch_size > 1
     assert args.full_stats_per_iter > 1
     assert args.tolerance > 0.
-    # assert 1 <= args.tobj_max_epochs <= 10
     assert args.n_hard_tasks >= 0
     assert args.nnz_ratio > 0.0
     assert args.ex_nnz_ratio > 0.0 or args.n_hard_tasks == 0
@@ -736,7 +729,6 @@ if __name__ == '__main__':
         MINMAX=args.minmax,
         FULL_STATS_PER_ITER=args.full_stats_per_iter,
         TOL=args.tolerance,
-        # TOBJ_MAX_EPOCHS=args.tobj_max_epochs,
         DELTA=args.delta,
         LOGC=args.logspace,
         INIT_C=args.init_c,
