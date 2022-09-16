@@ -20,9 +20,11 @@ logger.setLevel(logging.INFO)
 
 def reg(C, w, logspace=True):
     if logspace:
-        return torch.dot(torch.exp(C), torch.square(w.view(-1)))
+        # return torch.dot(torch.exp(C), torch.square(w.view(-1)))
+        return torch.dot(torch.exp(C), torch.sum(torch.square(w), 0))
     else:
-        return torch.dot(C, torch.square(w.view(-1)))
+        # return torch.dot(C, torch.square(w.view(-1)))
+        return torch.dot(C, torch.sum(torch.square(w), 0))
 
 
 def RFF(G, Wrand, feats, logspace=True):
@@ -37,9 +39,12 @@ def RFF(G, Wrand, feats, logspace=True):
 
 
 def blogloss(true_labels, logits):
-    sign_labels = 2 * true_labels - 1
-    per_point_loss = torch.log(1 + torch.exp(- sign_labels * logits))
-    return torch.mean(per_point_loss)
+    in_softmax = nn.Softmax(dim=1)
+    loss = nn.CrossEntropyLoss()
+    return loss(in_softmax(logits), true_labels)
+    ## sign_labels = 2 * true_labels - 1
+    ## per_point_loss = torch.log(1 + torch.exp(- sign_labels * logits))
+    ## return torch.mean(per_point_loss)
 
 
 def run_hpo(
@@ -87,7 +92,7 @@ def run_hpo(
 
     # INNER LEVEL VARS
     ntasks = len(TASKS)
-    inner_vars = [nn.Linear(2 * INT_DIM, 1) for _ in TASKS]
+    inner_vars = [nn.Linear(2 * INT_DIM, 2) for _ in TASKS]
     in_opts, in_scheds = [], []
     for iv in inner_vars:
         in_opt = torch.optim.SGD(
@@ -123,7 +128,7 @@ def run_hpo(
 
     # set up variables and optimizers for unseen tasks
     nttasks = len(TTASKS)
-    t_inner_vars = [nn.Linear(2 * INT_DIM, 1) for _ in TTASKS]
+    t_inner_vars = [nn.Linear(2 * INT_DIM, 2) for _ in TTASKS]
     t_in_opts, t_in_scheds = [], []
     for iv in t_inner_vars:
         in_opt = torch.optim.SGD(
@@ -490,11 +495,12 @@ if __name__ == '__main__':
         '--data', '-d', choices=['Letter'],
         help='Data set to use'
     )
-    ## parser.add_argument(
-    ##     '--path_to_data', '-Z', type=str,
-    ##     default='/home/pari/data/torchvision/',
-    ##     help='Path to load data'
-    ## )
+    parser.add_argument(
+        '--nobjs', '-a', type=int, default=10, help='Number of objectives for optimization'
+    )
+    parser.add_argument(
+        '--ntobjs', '-A', type=int, default=0, help='Number of unseen objectives'
+    )
     parser.add_argument(
         '--in_lrate', '-L', type=float, default=0.001,
         help='Initial learning rate for inner level'
@@ -576,8 +582,8 @@ if __name__ == '__main__':
 
     # assert os.path.isdir(args.path_to_data)
     assert os.path.isdir(args.output_dir) or args.output_dir == ''
-    ## assert args.nobjs > 1
-    ## assert args.ntobjs >= 0
+    assert args.nobjs > 1
+    assert args.ntobjs >= 0
     assert args.in_lrate > 0.
     assert args.out_lrate > 0.
     assert args.simplex_lrate > 0.
@@ -610,57 +616,63 @@ if __name__ == '__main__':
         for i in range(len(all_labels)) for j in range(i + 1, len(all_labels))
     ]
     logger.info(f'Total of {len(all_tasks)} binary classification tasks')
-    # FIXED TASKS
-    tasks = [
-        # EASY
-        ## (10, 12), # m,k
-        ## (0, 1),   # a,b
-        ## (14, 21), # o,v
-        ## (4, 20),  # e,u
-        ## (16, 22), # q,w
-        ## (13, 19), # n,t
-        ## (8, 15),  # i,p
-        ## (8, 12),  # i,m
-        ## (8, 22),  # i,w
-        ## (5, 13),  # f,n
-        (5, 21),  # f,v
-        (12, 21), # m,v
-        (12, 15), # m,p
-        (9, 22),  # j,w
-        (9, 13),  # j,n
-        # HARD
-        ## (21, 22), # v,w
-        ## (12, 13), # m,n
-        ## (8, 9),   # i,j
-        ## (5, 15),  # f,p
-        ## (18, 23), # s,x
-        ## (0, 20),  # a,u
-        ## (11, 19), # l,t
-        (1, 3),   # b,d
-        (7, 10),  # h,k
-        (4, 11),  # e,l
-    ]
-    ttasks = [
-        # EASY
-        (1, 2),   # b,c
-        (4, 21),  # e,v
-        (0, 12),  # a,k
-        # HARD
-        (18, 25), # s,z
-        (6, 16),  # g,q
-        (1, 17),  # b,r
-        (23, 25), # x,z
-        (2, 11),  # c,l
-        (2, 4),   # c,e
-        (6, 14),  # g,o
-    ]
-    NCLASSES=2
+    # RANDOM CONFIG
+    tidxs = np.arange(len(all_tasks))
+    RNG.shuffle(tidxs)
+    tasks = [all_tasks[tidxs[i]] for i in range(args.nobjs)]
+    ttasks = [all_tasks[tidxs[i]] for i in range(args.nobjs, args.nobjs+args.ntobjs)]
+    ## # FIXED TASKS
+    ## tasks = [
+    ##     # EASY
+    ##     ## (10, 12), # m,k
+    ##     ## (0, 1),   # a,b
+    ##     ## (14, 21), # o,v
+    ##     ## (4, 20),  # e,u
+    ##     ## (16, 22), # q,w
+    ##     ## (13, 19), # n,t
+    ##     ## (8, 15),  # i,p
+    ##     ## (8, 12),  # i,m
+    ##     ## (8, 22),  # i,w
+    ##     ## (5, 13),  # f,n
+    ##     (5, 21),  # f,v
+    ##     (12, 21), # m,v
+    ##     (12, 15), # m,p
+    ##     (9, 22),  # j,w
+    ##     (9, 13),  # j,n
+    ##     # HARD
+    ##     ## (21, 22), # v,w
+    ##     ## (12, 13), # m,n
+    ##     ## (8, 9),   # i,j
+    ##     ## (5, 15),  # f,p
+    ##     ## (18, 23), # s,x
+    ##     ## (0, 20),  # a,u
+    ##     ## (11, 19), # l,t
+    ##     (1, 3),   # b,d
+    ##     (7, 10),  # h,k
+    ##     (4, 11),  # e,l
+    ## ]
+    ## ttasks = [
+    ##     # EASY
+    ##     (1, 2),   # b,c
+    ##     (4, 21),  # e,v
+    ##     (0, 12),  # a,k
+    ##     # HARD
+    ##     (18, 25), # s,z
+    ##     (6, 16),  # g,q
+    ##     (1, 17),  # b,r
+    ##     (23, 25), # x,z
+    ##     (2, 11),  # c,l
+    ##     (2, 4),   # c,e
+    ##     (6, 14),  # g,o
+    ## ]
     logger.info(
         f"Performing {'minmax' if args.minmax else 'average'} optimization"
-        f" with the following tasks:")
+        f" with the following tasks:"
+    )
     logger.info(f"- Tasks: {tasks}")
     logger.info(f"To be evaluated with the following tasks:")
     logger.info(f"- Tasks: {ttasks}")
+    NCLASSES=2
     task_data = [get_task_data(
         full_data, t, val=True, train_val_size=args.train_val_size
     ) for t in tasks]
