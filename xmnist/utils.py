@@ -72,7 +72,7 @@ def pull_data(dfunc, path_to_data, totensor=True):
 
 def get_data(dname, path_to_data, totensor=True):
     assert dname in ['MNIST', 'FashionMNIST', 'CIFAR100', 'Letter']
-    assert os.path.isdir(path_to_data)
+    assert os.path.isdir(path_to_data) or dname in ['Letter']
     if dname == 'MNIST':
         return pull_data(MNIST, path_to_data, totensor=totensor)
     elif dname == 'FashionMNIST':
