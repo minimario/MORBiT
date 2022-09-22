@@ -48,7 +48,7 @@ MINVAL, MAXVAL, STEP, STEP1 = 0.0, 2.0, 0.2, 0.04
 LOGX, LOGY = False, True
 XTEXT, YTEXT = 1000, 0.48
 filter_list = [
-    'd:FashionMNIST',
+    # 'd:FashionMNIST',
     #'d:Letter',
     #'T:4_',
     #'D:100_',
@@ -97,8 +97,15 @@ parser.add_argument('--ylog', help='Log scale for y-axis', action='store_true')
 parser.add_argument(
     '--filter_list', '-F', help='comma-separated list of filtering terms', type=str,
     default=''
-    
+
 )
+parser.add_argument(
+    '--skip_unseen',
+    help='Skip plotting of unseen task test error',
+    action='store_true'
+)
+parser.add_argument('--agg', help='Aggregate per method curves', action='store_true')
+
 
 args = parser.parse_args()
 
@@ -118,7 +125,7 @@ MS=args.msize
 USEMAX = False
 TITLEFONT=args.tfsize
 TITLEPARAMS=args.tpwidth
-
+PAGG = args.agg
 
 opt_file = 'opt_stats_seen_tasks.csv'
 del_file = 'opt_deltas.cvs'
@@ -135,7 +142,7 @@ LOGX, LOGY = args.xlog, args.ylog
 XTEXT, YTEXT = args.xtext, args.ytext
 
 
-def plot_test_error(df, color, ax, ylab, label_suffix=''):
+def plot_test_error(df, color, ax, ylab, label_suffix='', pagg=False, mm=None, reps_dict=None):
     per_task_ys = []
     per_task_xs = []
     for t, tdf in df.groupby(['task']):
@@ -144,10 +151,11 @@ def plot_test_error(df, color, ax, ylab, label_suffix=''):
         logger.debug(f' ... task {t} ... X: {xvals.shape} ... Y: {yvals.shape}')
         per_task_ys += [yvals]
         per_task_xs += [xvals]
-        ax.plot(
-            xvals, yvals, c=color, ls=':', linewidth=LW,
-            **{'alpha': ALPHA/4}, label='_nolegend_'
-        )
+        if not pagg:
+            ax.plot(
+                xvals, yvals, c=color, ls=':', linewidth=LW,
+                **{'alpha': ALPHA/4}, label='_nolegend_'
+            )
     task_mean_ys = np.mean(np.array(per_task_ys), axis=0)
     per_task_bests = np.min(np.array(per_task_ys), axis=1)
     task_max_ys = np.max(np.array(per_task_ys), axis=0)
@@ -156,22 +164,29 @@ def plot_test_error(df, color, ax, ylab, label_suffix=''):
     assert np.sum(np.std(np.array(per_task_xs), axis=0)) == 0.0, (
         f'task x STDs: {np.std(np.array(per_task_xs), axis=0)}'
     )
-    ax.plot(
-        xvals, task_mean_ys, c=color, ls='-',
-        linewidth=LW, label=f'U-MEAN-f-te{label_suffix}',
-        **{'alpha': ALPHA}
-    )
-    ax.plot(
-        xvals, task_max_ys, c=color, ls='-',
-        linewidth=1.5*LW, label=f'U-MAX-f-te{label_suffix}',
-    )
-    ax.text(
-        0.6 * xvals[-1], 1.1 * task_max_ys[-1],
-        f'te:{task_max_ys[-1]:.3f} ({np.min(task_max_ys):.3f})',
-        fontsize=TITLEFONT,
-        c=color,
-    )
-    logger.info(f'Unseen {label_suffix}:\n{per_task_bests}')
+    if pagg:
+        assert mm is not None
+        assert isinstance(mm, bool)
+        assert mm == True or mm == False
+        reps_dict['U-MEAN-f-te'][mm] += [task_mean_ys]
+        reps_dict['U-MAX-f-te'][mm] += [task_max_ys]
+    else:
+        ax.plot(
+            xvals, task_mean_ys, c=color, ls='-',
+            linewidth=LW, label=f'U-MEAN-f-te{label_suffix}',
+            **{'alpha': ALPHA}
+        )
+        ax.plot(
+            xvals, task_max_ys, c=color, ls='-',
+            linewidth=1.5*LW, label=f'U-MAX-f-te{label_suffix}',
+        )
+        ax.text(
+            0.6 * xvals[-1], 1.1 * task_max_ys[-1],
+            f'te:{task_max_ys[-1]:.3f} ({np.min(task_max_ys):.3f})',
+            fontsize=TITLEFONT,
+            c=color,
+        )
+        logger.info(f'Unseen {label_suffix}:\n{per_task_bests}')
 
 major_yticks = np.arange(MINVAL, MAXVAL+STEP, step=STEP)
 minor_yticks = np.arange(MINVAL, MAXVAL+STEP1, step=STEP1)
@@ -193,7 +208,7 @@ nrows = 2
 fig, axs = plt.subplots(
     nrows, ncols, figsize=(WIDTH*ncols, HEIGHT), sharex=True, sharey=True,
     #squeeze=True,
-)
+) if not PAGG else (None, None)
 cidxs = [0, 0]
 colors = {
     'f-va-obj': 'r',
@@ -201,14 +216,45 @@ colors = {
 }
 colors1 = ['g', 'y', 'k', 'c']
 
+fig_agg, axs_agg = None, None
+cagg = {True: 'r', False: 'b'}
+agg_reps = {
+    'X': None,
+    'S-MEAN-f-va': {True: [], False: []},
+    'S-MAX-f-va': {True: [], False: []},
+    'S-MEAN-f-te': {True: [], False: []},
+    'S-MAX-f-te': {True: [], False: []},
+    'U-MEAN-f-te': {True: [], False: []},
+    'U-MAX-f-te': {True: [], False: []},
+} if PAGG else None
+if PAGG:
+    agg_cols = [[
+        'S-MEAN-f-va-ci',
+        'S-MEAN-f-va-iqr',
+        'S-MAX-f-va-ci',
+        'S-MAX-f-va-iqr',
+    ],[
+        'S-MEAN-f-te-ci',
+        'S-MEAN-f-te-iqr',
+        'S-MAX-f-te-ci',
+        'S-MAX-f-te-iqr',
+    ],[
+        'U-MEAN-f-te-ci',
+        'U-MEAN-f-te-iqr',
+        'U-MAX-f-te-ci',
+        'U-MAX-f-te-iqr',
+    ]]
+    fig_agg, axs_agg = plt.subplots(
+        3, 4, figsize=(WIDTH*3, HEIGHT), sharex=True, sharey=True,
+        #squeeze=True,
+    )
+
 METRICS = list(colors.keys())
-
-
 for c in tqdm(configs):
     minmax = ('M:True' in c)
     ridx = int(minmax)
     cidx = cidxs[ridx]
-    ax = axs[ridx, cidx]
+    ax = axs[ridx, cidx] if not PAGG else None
     cstr = c.split('/')[-1]
     cparams = cstr.split('_')
     title = ''
@@ -236,10 +282,11 @@ for c in tqdm(configs):
                 logger.debug(f'... task {t} ... X: {xvals.shape} ... Y: {yvals.shape}')
                 per_task_ys += [yvals]
                 per_task_xs += [xvals]
-                ax.plot(
-                    xvals, yvals, c=colors[m], ls=':', linewidth=LW,
-                    **{'alpha': ALPHA/4}, label='_nolegend_'
-                )
+                if not PAGG:
+                    ax.plot(
+                        xvals, yvals, c=colors[m], ls=':', linewidth=LW,
+                        **{'alpha': ALPHA/4}, label='_nolegend_'
+                    )
             task_mean_ys = np.mean(np.array(per_task_ys), axis=0)
             per_task_bests = np.min(np.array(per_task_ys), axis=1)
             task_max_ys = np.max(np.array(per_task_ys), axis=0)
@@ -252,16 +299,21 @@ for c in tqdm(configs):
             assert np.sum(np.std(np.array(per_task_xs), axis=0)) == 0.0, (
                 f'task x STDs: {np.std(np.array(per_task_xs), axis=0)}'
             )
-            ax.plot(
-                xvals, task_mean_ys, c=colors[m], ls='-', linewidth=LW,
-                label='S-MEAN-' + m,
-                **{'alpha': ALPHA}
-            )
-            ax.plot(
-                xvals, task_max_ys, c=colors[m], ls='-', linewidth=1.5*LW,
-                label='S-MAX-' + m,
-            )
-            if True: #'va-obj' in m:
+            if PAGG:
+                if agg_reps['X'] is None:
+                    agg_reps['X'] = xvals
+                agg_reps['S-MEAN-' + m.replace('-obj', '')][minmax] += [task_mean_ys]
+                agg_reps['S-MAX-' + m.replace('-obj', '')][minmax] += [task_max_ys]
+            else:
+                ax.plot(
+                    xvals, task_mean_ys, c=colors[m], ls='-', linewidth=LW,
+                    label='S-MEAN-' + m,
+                    **{'alpha': ALPHA}
+                )
+                ax.plot(
+                    xvals, task_max_ys, c=colors[m], ls='-', linewidth=1.5*LW,
+                    label='S-MAX-' + m,
+                )
                 ax.text(
                     0.6 * xvals[-1], 1.1 * task_max_ys[-1],
                     (
@@ -276,32 +328,97 @@ for c in tqdm(configs):
     df = pd.read_csv(os.path.join(c, uns_file))
     logger.debug(f'Read in {uns_file} of size {df.shape}')
     color_idx = 0
-    if len(df) > 0:
+    if len(df) > 0 and not args.skip_unseen:
         if 'ntrain' in list(df):
             for ntrain, ndf in df.groupby(['ntrain']):
                 unseen_color = colors1[color_idx]
                 logger.debug(f'... train size: {ntrain} ')
-                plot_test_error(ndf, unseen_color, ax, 'f-obj', f'-{ntrain}')
+                plot_test_error(
+                    ndf, unseen_color, ax, 'f-obj', f'-{ntrain}',
+                    pagg=PAGG, mm=minmax, reps_dict=agg_reps
+                )
                 color_idx += 1
         else:
-            plot_test_error(df, 'g', ax, 'f-obj')
-    ## ax.set_yticks(major_yticks)
-    ## ax.set_yticks(minor_yticks, minor=True)
-    if LOGX:
-        ax.set_xscale('log')
-    if LOGY:
-        ax.set_yscale('log', base=2)
-    ax.grid(axis='both', which='major', alpha=0.2)
-    ax.grid(axis='y', which='minor', alpha=0.1)
-    if cidx == 0 and ridx == 0:
-        ax.legend(loc='lower left', ncol=4, bbox_to_anchor=(0, 1.07), fontsize=TITLEFONT)
-    ax.set_title('MINMAX' if minmax else 'MINAVG')
-    ax.text(XTEXT, YTEXT, title, fontsize=TITLEFONT)
-    cidxs[ridx] += 1
-    # break
-# axs[0, 0].set_ylabel('Outer objective')
-# axs[1, -(ncols//2)].set_xlabel('Outer iterations')
-# fig.supxlabel('# Outer iterations')
-# plt.tight_layout()
-prefix = os.path.join(PATH, 'all_results')
-fig.savefig(f'{prefix}_opt.png', dpi=DPI)
+            plot_test_error(
+                df, 'g', ax, 'f-obj',
+                pagg=PAGG, mm=minmax, reps_dict=agg_reps
+            )
+    if not PAGG:
+        ## ax.set_yticks(major_yticks)
+        ## ax.set_yticks(minor_yticks, minor=True)
+        if LOGX:
+            ax.set_xscale('log')
+        if LOGY:
+            ax.set_yscale('log', base=2)
+        ax.grid(axis='both', which='major', alpha=0.2)
+        ax.grid(axis='y', which='minor', alpha=0.1)
+        if cidx == 0 and ridx == 0:
+            ax.legend(loc='lower left', ncol=4, bbox_to_anchor=(0, 1.07), fontsize=TITLEFONT)
+        ax.set_title('MINMAX' if minmax else 'MINAVG')
+        ax.text(XTEXT, YTEXT, title, fontsize=TITLEFONT)
+        cidxs[ridx] += 1
+        # break
+if PAGG:
+    for k, v in agg_reps.items():
+        if k == 'X':
+            continue
+        for kk, vv in v.items():
+            assert isinstance(kk, bool)
+            nvv = np.array(vv).shape
+            logger.info(f"{k} -- {'MINMAX' if kk else 'MINAVG'} -- {nvv}")
+    XVALS = np.array(agg_reps['X'])
+    for ridx, rnames in enumerate(agg_cols):
+        for cidx, pname in enumerate(rnames):
+            # find right key in agg_reps
+            mkeys = [k for k in agg_reps.keys() if (k != 'X') and (k in pname)]
+            assert len(mkeys) == 1, (f'Keys found {mkeys} for {pname}')
+            k = mkeys[0]
+            CI = (pname.replace(f'{k}-', '') == 'ci')
+            logger.info(f"Plot name: {pname}, key found: {k}, {'CI' if CI else 'IQR'}")
+            ax_agg = axs_agg[ridx, cidx]
+            ax_agg.set_title(pname)
+            for minmax, reps in agg_reps[k].items():
+                ccol = cagg[minmax]
+                curves = np.array(reps)
+                hi, mid, lo = None, None, None
+                if CI:
+                    mid = np.mean(curves, axis=0)
+                    std = np.std(curves, axis=0)
+                    hi = mid + std
+                    lo = np.clip(mid - std, 0, 100)
+                else:
+                    mid = np.percentile(curves, 50, axis=0)
+                    hi = np.percentile(curves, 75, axis=0)
+                    lo = np.percentile(curves, 25, axis=0)
+                logger.info(f"- {'MINMAX' if minmax else 'MINAVG'}: Full {curves.shape}, Aggs: {mid.shape}")
+                ax_agg.plot(
+                    XVALS, mid, c=ccol, ls='-', linewidth=1.5*LW,
+                    label='MINMAX' if minmax else 'MINAVG',
+                )
+                ax_agg.fill_between(
+                    XVALS, lo, hi, **{'alpha': ALPHA}, color=ccol,
+                    label='MINMAX' if minmax else 'MINAVG',
+                )
+            if LOGX:
+                ax_agg.set_xscale('log')
+            if LOGY:
+                ax_agg.set_yscale('log', base=2)
+            ax_agg.grid(axis='both', which='major', alpha=0.2)
+            ax_agg.grid(axis='y', which='minor', alpha=0.1)
+            if cidx == 0 and ridx == 0:
+                ax_agg.legend(
+                    ## loc='lower left',
+                    ## bbox_to_anchor=(0, 1.07),
+                    ## ncol=2,
+                    loc='upper right',
+                    fontsize=TITLEFONT
+                )
+    prefix = os.path.join(PATH, 'aggregate_results')
+    fig_agg.savefig(f'{prefix}_opt.png', dpi=DPI)
+else:
+    # axs[0, 0].set_ylabel('Outer objective')
+    # axs[1, -(ncols//2)].set_xlabel('Outer iterations')
+    # fig.supxlabel('# Outer iterations')
+    # plt.tight_layout()
+    prefix = os.path.join(PATH, 'all_results')
+    fig.savefig(f'{prefix}_opt.png', dpi=DPI)
