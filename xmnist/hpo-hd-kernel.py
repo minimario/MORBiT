@@ -616,12 +616,12 @@ if __name__ == '__main__':
     assert args.lambda_penalty >= 0.
 
 
+    RNG = np.random.RandomState(args.random_seed)
     tRNG = (
         np.random.RandomState(args.random_seed)
         if args.random_seed_for_tasks == 0
         else np.random.RandomState(args.random_seed_for_tasks)
-    )
-    RNG = np.random.RandomState(args.random_seed)
+    ) if args.random_seed_for_tasks != args.random_seed else RNG
     torch.manual_seed(args.random_seed)
     np.random.seed(args.random_seed)
     random.seed(args.random_seed)
