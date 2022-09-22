@@ -73,6 +73,7 @@ def run_hpo(
         INITC=0.0,
         INITG=1.0,
         NOSLRS=False,
+        LAMBDA_PENALTY=0.0,
 ):
     assert NCLASSES == 2
     # OUTER LEVEL VARS
@@ -194,12 +195,15 @@ def run_hpo(
         if MINMAX:
             simplex_opt.zero_grad()
             old_simplex_vars = simplex_vars.clone().detach()
+            old_simplex_vars.requires_grad = False
         out_losses = []
         in_losses = []
         in_objs = []
         in_deltas = []
         outer_loss = 0.0
         outer_old = [C.clone().detach(), G.clone().detach()]
+        outer_old[0].requires_grad = False
+        outer_old[1].requires_grad = False
         # Looping over all the tasks
         for t, tdata, tw, topt, tlambda in zip(
                 TASKS, TASK_DATA, inner_vars, in_opts, simplex_vars,
@@ -210,6 +214,7 @@ def run_hpo(
             total_loss = 0.
             total_obj = 0.
             inner_old = tw.weight.clone().detach()
+            inner_old.requires_grad = False
             for ii in range(IN_ITER):
                 topt.zero_grad()
                 logger.debug(
@@ -304,6 +309,8 @@ def run_hpo(
         if MINMAX:
             # negate gradient for gradient ascent
             simplex_vars.grad *= -1.
+            if LAMBDA_PENALTY > 0.:
+                simplex_vars.grad += (2 * LAMBDA_PENALTY * (old_simplex_vars - 1./ntasks))
             logger.debug(
                 f'[{ppr}] - g-Lambda: '
                 f'{simplex_vars.grad.clone().detach().numpy()}'
@@ -575,6 +582,10 @@ if __name__ == '__main__':
         '--train_val_size', '-X', type=int, default=0,
         help='Training and validation set sizes for each task'
     )
+    parser.add_argument(
+        '--lambda_penalty', '-e', type=float, default=0.,
+        help='Penalty on the simplex vars to diverge from uniform distribution',
+    )
 
     args = parser.parse_args()
     expt_tag = args2tag(parser, args)
@@ -599,6 +610,7 @@ if __name__ == '__main__':
     assert args.logspace or (args.initc >= 0. and args.initg > 0.)
     assert args.int_dim > 10
     assert args.train_val_size >= 0
+    assert args.lambda_penalty >= 0.
 
 
     RNG = np.random.RandomState(args.random_seed)
@@ -725,6 +737,7 @@ if __name__ == '__main__':
         INITC=args.initc,
         INITG=args.initg,
         NOSLRS=args.no_simplex_scheduler,
+        LAMBDA_PENALTY=args.lambda_penalty,
     )
 
     print('All stats: ', astats.shape)
