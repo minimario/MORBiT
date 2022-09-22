@@ -546,6 +546,9 @@ if __name__ == '__main__':
         '--random_seed', '-S', type=int, default=5489, help='Random seed for RNG'
     )
     parser.add_argument(
+        '--random_seed_for_tasks', '-t', type=int, default=0, help='Random seed for task sampler'
+    )
+    parser.add_argument(
         '--full_stats_per_iter', '-F', type=int, default=10,
         help='Save full stats every this iters'
     )
@@ -613,6 +616,11 @@ if __name__ == '__main__':
     assert args.lambda_penalty >= 0.
 
 
+    tRNG = (
+        np.random.RandomState(args.random_seed)
+        if args.random_seed_for_tasks == 0
+        else np.random.RandomState(args.random_seed_for_tasks)
+    )
     RNG = np.random.RandomState(args.random_seed)
     torch.manual_seed(args.random_seed)
     np.random.seed(args.random_seed)
@@ -630,7 +638,7 @@ if __name__ == '__main__':
     logger.info(f'Total of {len(all_tasks)} binary classification tasks')
     # RANDOM CONFIG
     tidxs = np.arange(len(all_tasks))
-    RNG.shuffle(tidxs)
+    tRNG.shuffle(tidxs)
     tasks = [all_tasks[tidxs[i]] for i in range(args.nobjs)]
     ttasks = [all_tasks[tidxs[i]] for i in range(args.nobjs, args.nobjs+args.ntobjs)]
     ## # FIXED TASKS
