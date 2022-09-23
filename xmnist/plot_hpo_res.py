@@ -104,8 +104,15 @@ parser.add_argument(
     help='Skip plotting of unseen task test error',
     action='store_true'
 )
-parser.add_argument('--agg', help='Aggregate per method curves', action='store_true')
 
+parser.add_argument('--agg', help='Aggregate per method curves', action='store_true')
+parser.add_argument('--agg_diff', help='Aggregate difference of method curves', action='store_true')
+parser.add_argument('--agg_interval', help='Aggregate per method curves', action='store_true')
+parser.add_argument(
+    '--single_plot',
+    help='Single plot with min-avg and min-max val and test',
+    action='store_true'
+)
 
 args = parser.parse_args()
 
@@ -125,8 +132,9 @@ MS=args.msize
 USEMAX = False
 TITLEFONT=args.tfsize
 TITLEPARAMS=args.tpwidth
-PAGG = args.agg
-
+PAGG = args.agg or args.agg_diff or args.single_plot
+PAGGDIFF = args.agg_diff
+SINGLEPLOT = args.single_plot
 opt_file = 'opt_stats_seen_tasks.csv'
 del_file = 'opt_deltas.cvs'
 uns_file = 'objs_unseen_tasks.csv'
@@ -248,6 +256,28 @@ if PAGG:
         3, 4, figsize=(WIDTH*3, HEIGHT), sharex=True, sharey=True,
         #squeeze=True,
     )
+
+spcol = {
+    True: {
+        'label': 'Val. loss',
+        'color': {
+            True: 'r',
+            False: 'b',
+        },
+    },
+    False: {
+        'label': 'Test loss',
+        'color': {
+            True: 'g',
+            False: 'm',
+        },
+    },
+} if SINGLEPLOT else None
+
+fig_sp, ax_sp = plt.subplots(
+    1, 1, figsize=(WIDTH, HEIGHT)
+) if SINGLEPLOT else (None, None)
+    
 
 METRICS = list(colors.keys())
 for c in tqdm(configs):
@@ -377,9 +407,13 @@ if PAGG:
             logger.info(f"Plot name: {pname}, key found: {k}, {'CI' if CI else 'IQR'}")
             ax_agg = axs_agg[ridx, cidx]
             ax_agg.set_title(pname)
+            allcurves = {True: None, False: None} if PAGGDIFF else None
             for minmax, reps in agg_reps[k].items():
                 ccol = cagg[minmax]
                 curves = np.array(reps)
+                if PAGGDIFF:
+                    allcurves[minmax] = curves
+                    continue
                 hi, mid, lo = None, None, None
                 if CI:
                     mid = np.mean(curves, axis=0)
@@ -391,30 +425,84 @@ if PAGG:
                     hi = np.percentile(curves, 75, axis=0)
                     lo = np.percentile(curves, 25, axis=0)
                 logger.info(f"- {'MINMAX' if minmax else 'MINAVG'}: Full {curves.shape}, Aggs: {mid.shape}")
+                if SINGLEPLOT:
+                    assert ax_sp is not None
+                    val = 'S-MAX-f-va' in pname
+                    test = 'S-MAX-f-te' in pname
+                    if (val or test) and not CI:
+                        logger.info(f'Plotting for {pname}')
+                        assert val or (not val and test)
+                        ax_sp.plot(
+                            XVALS, mid, c=spcol[val]['color'][minmax], ls='-', linewidth=1.5*LW,
+                        )
+                        ax_sp.fill_between(
+                            XVALS, lo, hi, **{'alpha': ALPHA}, color=spcol[val]['color'][minmax],
+                            label=f"{spcol[val]['label']}({'min-max' if minmax else 'min-avg'})",
+                        )
+                else:
+                    ax_agg.plot(
+                        XVALS, mid, c=ccol, ls='-', linewidth=1.5*LW,
+                        label='MINMAX' if minmax else 'MINAVG',
+                    )
+                    if args.agg_interval:
+                        ax_agg.fill_between(
+                            XVALS, lo, hi, **{'alpha': ALPHA}, color=ccol,
+                            label='MINMAX' if minmax else 'MINAVG',
+                        )
+            if PAGGDIFF:
+                assert allcurves is not None
+                assert all([allcurves[b] is not None for b in [True, False]])
+                assert allcurves[True].shape == allcurves[False].shape
+                curvediffs = allcurves[False] - allcurves[True]
+                hi, mid, lo = None, None, None
+                if CI:
+                    mid = np.mean(curvediffs, axis=0)
+                    std = np.std(curvediffs, axis=0)
+                    hi = mid + std
+                    lo = mid - std
+                else:
+                    mid = np.percentile(curvediffs, 50, axis=0)
+                    hi = np.percentile(curvediffs, 75, axis=0)
+                    lo = np.percentile(curvediffs, 25, axis=0)
+                logger.info(f"- {'MINMAX' if minmax else 'MINAVG'}: Full {curvediffs.shape}, Aggs: {mid.shape}")
                 ax_agg.plot(
-                    XVALS, mid, c=ccol, ls='-', linewidth=1.5*LW,
-                    label='MINMAX' if minmax else 'MINAVG',
+                    XVALS, mid, c='k', ls='-', linewidth=1.5*LW,
                 )
-                ax_agg.fill_between(
-                    XVALS, lo, hi, **{'alpha': ALPHA}, color=ccol,
-                    label='MINMAX' if minmax else 'MINAVG',
-                )
+                if args.agg_interval:
+                    ax_agg.fill_between(
+                        XVALS, lo, hi, **{'alpha': ALPHA}, color='k',
+                    )
+            tmp_ax = ax_sp if SINGLEPLOT else ax_agg
             if LOGX:
-                ax_agg.set_xscale('log')
+                tmp_ax.set_xscale('log')
             if LOGY:
-                ax_agg.set_yscale('log', base=2)
-            ax_agg.grid(axis='both', which='major', alpha=0.2)
-            ax_agg.grid(axis='y', which='minor', alpha=0.1)
-            if cidx == 0 and ridx == 0:
-                ax_agg.legend(
+                tmp_ax.set_yscale('log', base=2)
+            tmp_ax.grid(axis='both', which='major', alpha=0.2)
+            tmp_ax.grid(axis='y', which='minor', alpha=0.1)
+            if SINGLEPLOT:
+                ax_sp.legend(
                     ## loc='lower left',
                     ## bbox_to_anchor=(0, 1.07),
                     ## ncol=2,
                     loc='upper right',
-                    fontsize=TITLEFONT
+                    fontsize=1.3*TITLEFONT
                 )
-    prefix = os.path.join(PATH, 'aggregate_results')
-    fig_agg.savefig(f'{prefix}_opt.png', dpi=DPI)
+            else:
+                if cidx == 0 and ridx == 0:
+                    ax_agg.legend(
+                        ## loc='lower left',
+                        ## bbox_to_anchor=(0, 1.07),
+                        ## ncol=2,
+                        loc='upper right',
+                        fontsize=TITLEFONT
+                    )
+    if SINGLEPLOT:
+        assert fig_sp is not None
+        prefix = os.path.join(PATH, f"single_aggregate_results")
+        fig_sp.savefig(f'{prefix}_opt.png', dpi=DPI)
+    else:
+        prefix = os.path.join(PATH, f"aggregate_{'diff_' if PAGGDIFF else ''}results")
+        fig_agg.savefig(f'{prefix}_opt.png', dpi=DPI)
 else:
     # axs[0, 0].set_ylabel('Outer objective')
     # axs[1, -(ncols//2)].set_xlabel('Outer iterations')
