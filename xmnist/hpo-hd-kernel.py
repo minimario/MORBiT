@@ -549,6 +549,10 @@ if __name__ == '__main__':
         '--random_seed_for_tasks', '-t', type=int, default=0, help='Random seed for task sampler'
     )
     parser.add_argument(
+        '--random_seed_for_task_data', '-T', type=int, default=0,
+        help='Random seed for task data sampler'
+    )
+    parser.add_argument(
         '--full_stats_per_iter', '-F', type=int, default=10,
         help='Save full stats every this iters'
     )
@@ -616,15 +620,22 @@ if __name__ == '__main__':
     assert args.lambda_penalty >= 0.
 
 
-    RNG = np.random.RandomState(args.random_seed)
+
+    SEED1 = args.random_seed if (
+        (args.random_seed_for_task_data == 0) or
+        (args.random_seed_for_task_data == args.random_seed)
+    ) else args.random_seed_for_task_data
+
+    RNG = np.random.RandomState(SEED1)
+    torch.manual_seed(SEED1)
+    np.random.seed(SEED1)
+    random.seed(SEED1)
+
     tRNG = (
         np.random.RandomState(args.random_seed)
         if args.random_seed_for_tasks == 0
         else np.random.RandomState(args.random_seed_for_tasks)
     ) if args.random_seed_for_tasks != args.random_seed else RNG
-    torch.manual_seed(args.random_seed)
-    np.random.seed(args.random_seed)
-    random.seed(args.random_seed)
 
     full_data = get_data(args.data, '')
     input_dim = full_data['train'].data.shape
@@ -714,6 +725,19 @@ if __name__ == '__main__':
             vX, _ = td['val']
             min_vX, max_vX = torch.min(vX).item(), torch.max(vX).item()
             logger.info(f'Task {t} -- vX ({min_vX:.4f}, {max_vX:.4f})')
+
+
+    SEED2 = args.random_seed
+    if SEED2 != SEED1:
+        logger.info(f'Updating RNG seed from {SEED1} --> {SEED2}')
+        RNG = np.random.RandomState(SEED2)
+        torch.manual_seed(SEED2)
+        np.random.seed(SEED2)
+        random.seed(SEED2)
+    else:
+        logger.info(f'Keeping RNG seed as {SEED1}')
+
+
     output_dir = os.path.join(args.output_dir, expt_tag)
     if args.output_dir != '':
         assert not os.path.exists(output_dir)
