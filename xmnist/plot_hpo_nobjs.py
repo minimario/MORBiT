@@ -18,7 +18,7 @@ import os
 
 import logging
 logging.basicConfig(stream=sys.stdout)
-logger = logging.getLogger('PLOT-HPO-BATCH')
+logger = logging.getLogger('PLOT-HPO-NOBJS')
 logger.setLevel(logging.DEBUG)
 
 
@@ -50,7 +50,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dpi', '-D', help='Image DPI', type=int, default=DPI)
 parser.add_argument('--lw', '-L', help='Line width', type=int, default=LW)
 parser.add_argument(
-    '--alpha', '-A', help='Task line transperancy', type=int, default=ALPHA
+    '--alpha', '-A', help='Task line transperancy', type=float, default=ALPHA
 )
 parser.add_argument('--width', '-W', help='Per-image width', type=int, default=WIDTH)
 parser.add_argument('--height', '-H', help='Per-image height', type=int, default=HEIGHT)
@@ -79,7 +79,9 @@ parser.add_argument(
     '--filter_list', '-F', help='comma-separated list of filtering terms', type=str,
     default=''
 )
-parser.add_argument('--agg_interval', help='Aggregate per method curves', action='store_true')
+parser.add_argument('--include_lr', help='Incorporate LR in grad', action='store_true')
+parser.add_argument('--small_range', help='Cover full range of nobjs or 4x ones', action='store_true')
+parser.add_argument('--bnd', help='Plot theoretical bound', action='store_true')
 
 args = parser.parse_args()
 
@@ -98,7 +100,7 @@ HEIGHT=args.height
 MS=args.msize
 USEMAX = False
 TITLEFONT=args.tfsize
-opt_file = 'opt_stats_seen_tasks.csv'
+del_file = 'opt_deltas.csv'
 
 MINVAL, MAXVAL, STEP, STEP1 = args.minyval, args.maxyval, args.ymajor, args.yminor
 LOGX, LOGY = args.xlog, args.ylog
@@ -113,43 +115,45 @@ if len(filter_list) > 0:
         if all([f in c for f in filter_list])
     ]
 logger.info(f'Filtered to {len(configs)} configs in {PATH}')
-colors = ['r', 'g', 'y', 'c', 'k']
-bsizes = [8, 16, 32, 64, 128]
-cdict = {f'b={b}': c for b, c in zip(bsizes, colors)}
-METRIC = 'f-te-obj'
-agg_reps = {b: [] for b in cdict.keys()}
+colors = [
+    'g', 'y', 'r', 'm', 'k', 'b', 'c'
+] if not args.small_range else [
+    'g', 'r', 'c',
+]
+nobjs = [
+    4, 9, 16, 25, 36, 49, 64
+] if not args.small_range else [
+    4, 16, 64
+]
+cdict = {f'n={n}': c for n, c in zip(nobjs, colors)}
+METRIC = 'delta'
+VAR = 'ALL'
+XCOL = 'oiter'
+agg_reps = {n: [] for n in cdict.keys()}
 agg_reps['X'] = None
 for c in tqdm(configs):
     minmax = ('M:True' in c)
     assert minmax
-    matches = [b for b in bsizes if (f'B:{b}_' in c) and (f'b:{b}_' in c)]
-    assert len(matches) == 1, (f'Matches found for {c}:\n{matches}')
-    bmatch = matches[0]
-    bkey = f'b={bmatch}'
-    logger.info(f'{bkey} matches in config {c}')
+    matches = [n for n in nobjs if (f'a:{n}_' in c) and (f'A:0_' in c)]
+    assert len(matches) <= 1, (f'Matches found for {c}:\n{matches}')
+    if len(matches) == 0:
+        logger.info(f'Skipping config {c}')
+        continue
+    nmatch = matches[0]
+    nkey = f'n={nmatch}'
+    logger.info(f'{nkey} matches in config {c}')
     # handle stats for seen tasks
-    df = pd.read_csv(os.path.join(c, opt_file))
-    logger.debug(f'Read in {opt_file} of size {df.shape}')
-    for b, bdf in df.groupby(['batch']):
-        if b: continue
-        per_task_ys = []
-        per_task_xs = []
-        for t, tdf in bdf.groupby(['task']):
-            xvals = tdf['oiter'].values
-            yvals = tdf[METRIC].values
-            per_task_ys += [yvals]
-            per_task_xs += [xvals]
-        task_max_ys = np.max(np.array(per_task_ys), axis=0)
-        assert len(task_max_ys) == len(per_task_ys[0]), (
-            f'Task max shape: {task_max_ys.shape}'
-        )
-        assert np.sum(np.std(np.array(per_task_xs), axis=0)) == 0.0, (
-            f'task x STDs: {np.std(np.array(per_task_xs), axis=0)}'
-        )
+    df = pd.read_csv(os.path.join(c, del_file))
+    logger.debug(f'Read in {del_file} of size {df.shape}')
+    for t, tdf in df.groupby(['task']):
+        if t != 'ALL':
+            continue
         if agg_reps['X'] is None:
-            agg_reps['X'] = xvals
-        agg_reps[bkey] += [task_max_ys]
-
+            agg_reps['X'] = tdf['oiter'].values
+        agg_reps[nkey] += [
+            tdf['delta'].values/tdf['lr'].values
+            if args.include_lr else tdf['delta'].values
+        ] 
 
 fig, ax = plt.subplots(
     1, 1, figsize=(WIDTH, HEIGHT), squeeze=True,
@@ -157,18 +161,29 @@ fig, ax = plt.subplots(
 for k, v in agg_reps.items():
     if k == 'X':
         continue
+    n = int(k.replace('n=', ''))
     XVALS = np.array(agg_reps['X'])
     curves = np.array(v)
     mid = np.percentile(curves, 50, axis=0)
     hi = np.percentile(curves, 75, axis=0)
     lo = np.percentile(curves, 25, axis=0)
-    logger.info(f"[{k}] Full {curves.shape}, Aggs: {mid.shape}, X: {XVALS.shape}")
+    logger.info(f"[{k} -> {n}] Full {curves.shape}, Aggs: {mid.shape}, X: {XVALS.shape}")
     ax.plot(
-        XVALS, mid, c=cdict[k], ls='-', linewidth=1.5*LW,
+        XVALS, mid, c=cdict[k], ls='-', linewidth=0.5*LW, **{'alpha': ALPHA}
     )
     ax.fill_between(
-        XVALS, lo, hi, **{'alpha': ALPHA}, color=cdict[k], label=k,
+        XVALS, lo, hi, **{'alpha': ALPHA/3}, color=cdict[k], label=k,
     )
+    bnd = np.array([np.max(mid) * np.sqrt(n) * np.power(float(t), -0.4) for t in XVALS])
+    if args.bnd:
+        ax.plot(XVALS, bnd, c=cdict[k], ls=':', linewidth=LW)
+        ax.text(
+            0.8 * XVALS[-1],
+            bnd[-1]*1.1,
+            f'O({np.sqrt(n).astype(int)}' + r'$K^{-2/5}$' + ')',
+            fontsize=TITLEFONT
+        )
+
 if LOGX:
     ax.set_xscale('log')
 if LOGY:
@@ -177,7 +192,7 @@ ax.grid(axis='both', which='major', alpha=0.2)
 ax.grid(axis='y', which='minor', alpha=0.1)
 ax.legend(
     loc='upper right',
-    ncol=2,
+    ncol=3 if args.small_range else 2,
     fontsize=1.5*TITLEFONT
 )
 ax.set_xlabel(
@@ -185,9 +200,9 @@ ax.set_xlabel(
     fontsize=2*TITLEFONT
 )
 ax.set_ylabel(
-    r'$\max_{i \in [n]}$' + ' ' + r'$f_i(x, y_i^*(x))$',
+    'Gradient norm: ' + r'$\| \nabla_x \|_2$',
     fontsize=2*TITLEFONT
 )
 plt.tight_layout()
-prefix = os.path.join(PATH, f"batchwise_aggregate_results")
+prefix = os.path.join(PATH, f"nobjs_aggregate_results")
 fig.savefig(f'{prefix}.png', dpi=DPI)

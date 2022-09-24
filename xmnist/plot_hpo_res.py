@@ -266,7 +266,7 @@ spcol = {
         },
     },
     False: {
-        'label': 'Test loss',
+        'label': 'Gen. loss',
         'color': {
             True: 'g',
             False: 'm',
@@ -275,7 +275,7 @@ spcol = {
 } if SINGLEPLOT else None
 
 fig_sp, ax_sp = plt.subplots(
-    1, 1, figsize=(WIDTH, HEIGHT)
+    1, 1, figsize=(WIDTH, HEIGHT), squeeze=True,
 ) if SINGLEPLOT else (None, None)
     
 
@@ -485,7 +485,15 @@ if PAGG:
                     ## bbox_to_anchor=(0, 1.07),
                     ## ncol=2,
                     loc='upper right',
-                    fontsize=1.3*TITLEFONT
+                    fontsize=2*TITLEFONT
+                )
+                ax_sp.set_xlabel(
+                    'Iterations ' + r'$K$',
+                    fontsize=2*TITLEFONT
+                )
+                ax_sp.set_ylabel(
+                    r'$\max_{i \in [n]}$' + ' ' + r'$f_i(x, y_i^*(x))$',
+                    fontsize=2*TITLEFONT
                 )
             else:
                 if cidx == 0 and ridx == 0:
@@ -497,6 +505,7 @@ if PAGG:
                         fontsize=TITLEFONT
                     )
     if SINGLEPLOT:
+        plt.tight_layout()
         assert fig_sp is not None
         prefix = os.path.join(PATH, f"single_aggregate_results")
         fig_sp.savefig(f'{prefix}_opt.png', dpi=DPI)
