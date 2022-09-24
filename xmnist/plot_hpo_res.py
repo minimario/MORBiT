@@ -113,6 +113,7 @@ parser.add_argument(
     help='Single plot with min-avg and min-max val and test',
     action='store_true'
 )
+parser.add_argument('--maxxval', '-X', help='max x-val for single plot', type=int, default=0)
 
 args = parser.parse_args()
 
@@ -487,16 +488,23 @@ if PAGG:
                     fontsize=TITLEFONT
                 )
     if SINGLEPLOT:
-        yticks = [-1.2, -1.0, -0.8, -0.6] # np.arange(-1.6, -0.8, step=0.4)
-        major_yticks = np.power(2, yticks)
-        ax_sp.set_yticks(major_yticks)
-        ylabels = [
-            r'$2^{-1.2}$',
-            r'$2^{-1.0}$',
-            r'$2^{-0.8}$',
-            r'$2^{-0.6}$',
-        ]
-        ax_sp.set_yticklabels(ylabels)
+        if args.maxxval > 0:
+            ax_sp.set_xlim(0, args.maxxval)
+        if LOGX:
+            ax_sp.set_xscale('log')
+        if LOGY:
+            ax_sp.set_yscale('log', base=2)
+            yticks = [-1.2, -1.0, -0.8, -0.6, -0.4] # np.arange(-1.6, -0.8, step=0.4)
+            major_yticks = np.power(2, yticks)
+            ax_sp.set_yticks(major_yticks)
+            ylabels = [
+                r'$2^{-1.2}$',
+                r'$2^{-1.0}$',
+                r'$2^{-0.8}$',
+                r'$2^{-0.6}$',
+                r'$2^{-0.4}$',
+            ]
+            ax_sp.set_yticklabels(ylabels)
         ax_sp.grid(axis='both', which='major', alpha=0.5)
         ax_sp.legend(
             ## loc='lower left',
