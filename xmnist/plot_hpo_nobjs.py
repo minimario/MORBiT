@@ -188,12 +188,14 @@ if LOGX:
     ax.set_xscale('log')
 if LOGY:
     ax.set_yscale('log', base=2)
+major_yticks = np.power(2, np.arange(1, 7, step=1))
+ax.set_yticks(major_yticks)
 ax.grid(axis='both', which='major', alpha=0.2)
-ax.grid(axis='y', which='minor', alpha=0.1)
 ax.legend(
     loc='upper right',
-    ncol=3 if args.small_range else 2,
-    fontsize=1.5*TITLEFONT
+    ncol=1 if args.small_range else 2,
+    fontsize=1.4*TITLEFONT,
+    # title="# obj pairs",
 )
 ax.set_xlabel(
     'Iterations ' + r'$K$',
