@@ -182,7 +182,7 @@ if LOGY:
     ax.set_yticks(major_yticks)
     ylabels = [r'$2^{-1.6}$', r'$2^{-1.4}$', r'$2^{-1.2}$', r'$2^{-1.0}$', r'$2^{-0.8}$', r'$2^{-0.6}$']
     ax.set_yticklabels(ylabels)
-ax.grid(axis='both', which='major', alpha=0.2)
+ax.grid(axis='both', which='major', alpha=0.5)
 # ax.grid(axis='y', which='minor', alpha=0.1)
 ax.legend(
     loc='upper right',

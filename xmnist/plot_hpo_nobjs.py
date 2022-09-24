@@ -188,9 +188,9 @@ if LOGX:
     ax.set_xscale('log')
 if LOGY:
     ax.set_yscale('log', base=2)
-major_yticks = np.power(2, np.arange(1, 7, step=1))
-ax.set_yticks(major_yticks)
-ax.grid(axis='both', which='major', alpha=0.2)
+    major_yticks = np.power(2, np.arange(1, 7, step=1))
+    ax.set_yticks(major_yticks)
+ax.grid(axis='both', which='major', alpha=0.99)
 ax.legend(
     loc='upper right',
     ncol=1 if args.small_range else 2,
